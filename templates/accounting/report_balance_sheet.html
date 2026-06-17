@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Neraca{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Neraca</h1>
+<form method="get" class="mb-4 flex flex-wrap items-end gap-3 rounded border bg-white p-3 text-sm">
+    <div>
+        <label class="block">Per Tanggal</label>
+        <input class="rounded border px-2 py-1" type="date" name="as_of_date" value="{{ request.GET.as_of_date }}">
+    </div>
+    <button class="rounded bg-slate-900 px-3 py-2 text-white">Tampilkan</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="xlsx">Excel</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="pdf">PDF</button>
+</form>
+<div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm">
+<thead class="bg-slate-100 text-left"><tr><th class="p-2">Item</th><th class="p-2 text-right">Nilai</th></tr></thead>
+<tbody>
+{% for row in rows %}
+    {% if row.line.line_type == 'blank' %}
+        <tr class="border-t"><td class="p-2" colspan="2">&nbsp;</td></tr>
+    {% else %}
+        <tr class="border-t {% if row.line.is_bold %}font-semibold{% endif %}">
+            <td class="p-2" style="padding-left: {{ row.line.indent_level }}rem">{{ row.line.label }}</td>
+            <td class="p-2 text-right">{% if row.has_value %}{{ row.value|thousand_id }}{% endif %}</td>
+        </tr>
+    {% endif %}
+{% endfor %}
+</tbody>
+</table></div>
+{% endblock %}

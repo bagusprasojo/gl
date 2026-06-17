@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Core Accounting{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div class="min-h-screen">
+        {% if user.is_authenticated %}
+            <nav class="border-b bg-white">
+                <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+                    <a href="{% url 'home' %}" class="font-semibold">Core Accounting</a>
+                    <div class="flex items-center gap-4 text-sm">
+                        <a href="{% url 'accounting:account_list' %}">Akun</a>
+                        <a href="{% url 'accounting:journal_list' %}">Jurnal</a>
+                        <a href="{% url 'accounting:period_list' %}">Periode</a>
+                        <a href="{% url 'accounting:module_list' %}">Modul</a>
+                        <div x-data="{open:false}" class="relative">
+                            <button type="button" @click="open=!open">Laporan</button>
+                            <div x-show="open" @click.outside="open=false" class="absolute right-0 z-10 mt-2 w-48 rounded border bg-white p-2 shadow">
+                                <a class="block px-2 py-1" href="{% url 'accounting:report_general_ledger' %}">Buku Besar</a>
+                                <a class="block px-2 py-1" href="{% url 'accounting:report_trial_balance' %}">Neraca Percobaan</a>
+                                <a class="block px-2 py-1" href="{% url 'accounting:report_income_statement' %}">Laba Rugi</a>
+                                <a class="block px-2 py-1" href="{% url 'accounting:report_balance_sheet' %}">Neraca</a>
+                                <a class="block px-2 py-1" href="{% url 'accounting:report_cash_flow' %}">Arus Kas</a>
+                            </div>
+                        </div>
+                        <form method="post" action="{% url 'logout' %}">
+                            {% csrf_token %}
+                            <button type="submit">Keluar</button>
+                        </form>
+                    </div>
+                </div>
+            </nav>
+        {% endif %}
+        <main class="mx-auto max-w-7xl px-4 py-6">
+            {% for message in messages %}
+                <div class="mb-4 rounded border bg-white px-4 py-3 text-sm">{{ message }}</div>
+            {% endfor %}
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</body>
+</html>

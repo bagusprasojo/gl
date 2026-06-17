@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Buku Besar{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Buku Besar</h1>
+{% include "accounting/report_filters.html" %}
+<div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm">
+<thead class="bg-slate-100 text-left"><tr><th class="p-2">Tanggal</th><th class="p-2">Nomor</th><th class="p-2">Akun</th><th class="p-2">Keterangan</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Kredit</th></tr></thead>
+<tbody>{% for line in lines %}<tr class="border-t"><td class="p-2">{{ line.entry.date }}</td><td class="p-2"><a class="text-blue-700" href="{% url 'accounting:journal_detail' line.entry.uuid %}">{{ line.entry.number }}</a></td><td class="p-2">{{ line.account.code }} - {{ line.account.name }}</td><td class="p-2">{{ line.description }}</td><td class="p-2 text-right">{{ line.debit|thousand_id }}</td><td class="p-2 text-right">{{ line.credit|thousand_id }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% if page_obj.paginator.count %}
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div class="text-slate-600">
+            Menampilkan {{ page_obj.start_index }}-{{ page_obj.end_index }} dari {{ page_obj.paginator.count }} baris buku besar
+        </div>
+        {% if page_obj.paginator.num_pages > 1 %}
+            <div class="flex items-center gap-2">
+                {% if page_obj.has_previous %}
+                    <a class="rounded border bg-white px-3 py-2" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}">Sebelumnya</a>
+                {% else %}
+                    <span class="rounded border bg-slate-100 px-3 py-2 text-slate-400">Sebelumnya</span>
+                {% endif %}
+
+                <span class="px-2">Halaman {{ page_obj.number }} dari {{ page_obj.paginator.num_pages }}</span>
+
+                {% if page_obj.has_next %}
+                    <a class="rounded border bg-white px-3 py-2" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}">Berikutnya</a>
+                {% else %}
+                    <span class="rounded border bg-slate-100 px-3 py-2 text-slate-400">Berikutnya</span>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+{% else %}
+    <div class="mt-4 rounded border bg-white px-4 py-3 text-sm text-slate-600">Tidak ada baris buku besar untuk filter ini.</div>
+{% endif %}
+{% endblock %}

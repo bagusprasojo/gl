@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Arus Kas{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Arus Kas</h1>
+{% include "accounting/report_filters.html" %}
+<div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm">
+<thead class="bg-slate-100 text-left"><tr><th class="p-2">Item</th><th class="p-2 text-right">Nilai</th></tr></thead>
+<tbody>
+{% for group in groups %}
+    <tr class="border-t font-semibold"><td class="p-2">{{ group.label }}</td><td class="p-2"></td></tr>
+    {% for row in group.rows %}
+        <tr class="border-t">
+            <td class="p-2 pl-8">{{ row.category.name }}</td>
+            <td class="p-2 text-right">{{ row.amount|thousand_id }}</td>
+        </tr>
+    {% endfor %}
+    <tr class="border-t bg-slate-50 font-semibold">
+        <td class="p-2">Jumlah {{ group.label|lower }}</td>
+        <td class="p-2 text-right">{{ group.total|thousand_id }}</td>
+    </tr>
+{% endfor %}
+</tbody>
+<tfoot class="border-t bg-slate-50 font-semibold">
+    <tr><td class="p-2">Kenaikan/Penurunan Bersih Kas</td><td class="p-2 text-right">{{ net_cash_flow|thousand_id }}</td></tr>
+    <tr><td class="p-2">Kas Awal Periode</td><td class="p-2 text-right">{{ cash_beginning|thousand_id }}</td></tr>
+    <tr><td class="p-2">Kas Akhir Periode</td><td class="p-2 text-right">{{ cash_ending|thousand_id }}</td></tr>
+</tfoot>
+</table></div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Modul{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Module Registry</h1>
+<div class="overflow-hidden rounded border bg-white">
+    <table class="w-full text-sm">
+        <thead class="bg-slate-100 text-left"><tr><th class="p-2">Key</th><th class="p-2">Nama</th><th class="p-2">Tipe</th><th class="p-2">Status</th></tr></thead>
+        <tbody>
+            {% for module in modules %}
+                <tr class="border-t">
+                    <td class="p-2">{{ module.key }}</td>
+                    <td class="p-2">{{ module.name }}</td>
+                    <td class="p-2">{{ module.get_module_type_display }}</td>
+                    <td class="p-2">{{ module.is_active|yesno:"Aktif,Nonaktif" }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

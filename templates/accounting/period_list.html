@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Periode{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Periode Akuntansi</h1>
+<div class="overflow-hidden rounded border bg-white">
+    <table class="w-full text-sm">
+        <thead class="bg-slate-100 text-left"><tr><th class="p-2">Periode</th><th class="p-2">Tanggal</th><th class="p-2">Status</th><th class="p-2"></th></tr></thead>
+        <tbody>
+            {% for period in periods %}
+                <tr class="border-t">
+                    <td class="p-2">{{ period.year }}-{{ period.month|stringformat:"02d" }}</td>
+                    <td class="p-2">{{ period.start_date }} s/d {{ period.end_date }}</td>
+                    <td class="p-2">{{ period.get_status_display }}</td>
+                    <td class="p-2 text-right">
+                        {% if period.status == 'open' %}
+                            <form method="post" action="{% url 'accounting:period_close' period.uuid %}">{% csrf_token %}<button class="text-blue-700">Closing</button></form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

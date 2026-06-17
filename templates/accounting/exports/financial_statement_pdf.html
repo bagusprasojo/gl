@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 16mm;
+        }
+        body {
+            color: #0f172a;
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+        }
+        .company {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 3px;
+        }
+        .meta {
+            color: #475569;
+            margin-bottom: 2px;
+        }
+        .title {
+            font-size: 14px;
+            font-weight: 700;
+            margin-top: 18px;
+            text-align: center;
+            text-transform: uppercase;
+        }
+        .period {
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th {
+            background: #e2e8f0;
+            border-bottom: 1px solid #94a3b8;
+            padding: 7px;
+            text-align: left;
+        }
+        td {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 6px 7px;
+            vertical-align: top;
+        }
+        .amount {
+            text-align: right;
+            width: 32%;
+        }
+        .bold {
+            font-weight: 700;
+        }
+        .blank td {
+            border-bottom: 0;
+            height: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="company">{{ company.name }}</div>
+    {% if company.legal_name %}<div class="meta">{{ company.legal_name }}</div>{% endif %}
+    {% if company.address %}<div class="meta">{{ company.address }}</div>{% endif %}
+    {% if company.tax_number %}<div class="meta">NPWP: {{ company.tax_number }}</div>{% endif %}
+
+    <div class="title">{{ title }}</div>
+    <div class="period">{{ period_label }}</div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th class="amount">Nilai</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+                {% if row.is_blank %}
+                    <tr class="blank"><td colspan="2"></td></tr>
+                {% else %}
+                    <tr class="{% if row.is_bold %}bold{% endif %}">
+                        <td style="padding-left: {{ row.indent_level }}rem">{{ row.label }}</td>
+                        <td class="amount">{{ row.formatted_value }}</td>
+                    </tr>
+                {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<form method="get" class="mb-4 flex flex-wrap items-end gap-3 rounded border bg-white p-3 text-sm">
+    <div>
+        <label class="block">Dari</label>
+        <input class="rounded border px-2 py-1" type="date" name="start_date" value="{{ request.GET.start_date }}">
+    </div>
+    <div>
+        <label class="block">Sampai</label>
+        <input class="rounded border px-2 py-1" type="date" name="end_date" value="{{ request.GET.end_date }}">
+    </div>
+    {% if accounts %}
+    <div>
+        <label class="block">Akun</label>
+        <select class="rounded border px-2 py-1" name="account">
+            <option value="">Semua</option>
+            {% for account in accounts %}
+                <option value="{{ account.uuid }}" {% if request.GET.account == account.uuid|stringformat:"s" %}selected{% endif %}>{{ account.code }} - {{ account.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% endif %}
+    <button class="rounded bg-slate-900 px-3 py-2 text-white">Tampilkan</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="xlsx">Excel</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="pdf">PDF</button>
+</form>

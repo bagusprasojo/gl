@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Neraca Percobaan{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Neraca Percobaan</h1>
+{% include "accounting/report_filters.html" %}
+<div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm">
+<thead class="bg-slate-100 text-left"><tr><th class="p-2">Kode</th><th class="p-2">Akun</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Kredit</th></tr></thead>
+<tbody>{% for row in rows %}<tr class="border-t"><td class="p-2">{{ row.account.code }}</td><td class="p-2">{{ row.account.name }}</td><td class="p-2 text-right">{{ row.debit }}</td><td class="p-2 text-right">{{ row.credit }}</td></tr>{% endfor %}</tbody>
+<tfoot class="border-t bg-slate-50 font-semibold"><tr><td class="p-2" colspan="2">Total</td><td class="p-2 text-right">{{ total_debit }}</td><td class="p-2 text-right">{{ total_credit }}</td></tr></tfoot>
+</table></div>
+{% endblock %}

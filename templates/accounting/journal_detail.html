@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}{{ entry.number }}{% endblock %}
+{% block content %}
+<div class="mb-4 flex items-center justify-between">
+    <div>
+        <h1 class="text-xl font-semibold">{{ entry.number }}</h1>
+        <p class="text-sm text-slate-600">{{ entry.date }} - {{ entry.get_status_display }}</p>
+    </div>
+    <div class="flex gap-2">
+        {% if entry.status == 'draft' %}
+            <a class="rounded border bg-white px-4 py-2 text-sm" href="{% url 'accounting:journal_edit' entry.uuid %}">Edit</a>
+            <form method="post" action="{% url 'accounting:journal_post' entry.uuid %}">{% csrf_token %}<button class="rounded bg-slate-900 px-4 py-2 text-sm text-white">Posting</button></form>
+        {% endif %}
+        {% if entry.status == 'posted' %}
+            <form method="post" action="{% url 'accounting:journal_reverse' entry.uuid %}">{% csrf_token %}<button class="rounded border bg-white px-4 py-2 text-sm">Reversal</button></form>
+        {% endif %}
+    </div>
+</div>
+<p class="mb-4">{{ entry.memo }}</p>
+<div class="overflow-hidden rounded border bg-white">
+    <table class="w-full text-sm">
+        <thead class="bg-slate-100 text-left"><tr><th class="p-2">Akun</th><th class="p-2">Keterangan</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Kredit</th></tr></thead>
+        <tbody>
+            {% for line in entry.lines.all %}
+                <tr class="border-t">
+                    <td class="p-2">{{ line.account.code }} - {{ line.account.name }}</td>
+                    <td class="p-2">{{ line.description }}</td>
+                    <td class="p-2 text-right">{{ line.debit|thousand_id }}</td>
+                    <td class="p-2 text-right">{{ line.credit|thousand_id }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot class="border-t bg-slate-50 font-semibold">
+            <tr><td class="p-2" colspan="2">Total</td><td class="p-2 text-right">{{ entry.total_debit|thousand_id }}</td><td class="p-2 text-right">{{ entry.total_credit|thousand_id }}</td></tr>
+        </tfoot>
+    </table>
+</div>
+{% endblock %}
