@@ -3,15 +3,49 @@
 {% block title %}Buku Besar{% endblock %}
 {% block content %}
 <h1 class="mb-4 text-xl font-semibold">Buku Besar</h1>
-{% include "accounting/report_filters.html" %}
+<form method="get" class="mb-4 flex flex-wrap items-end gap-3 rounded border bg-white p-3 text-sm">
+    <div>
+        <label class="block">Dari</label>
+        <input class="rounded border px-2 py-1" type="date" name="start_date" value="{{ request.GET.start_date }}">
+    </div>
+    <div>
+        <label class="block">Sampai</label>
+        <input class="rounded border px-2 py-1" type="date" name="end_date" value="{{ request.GET.end_date }}">
+    </div>
+    <div>
+        <label class="block">Akun</label>
+        <select class="min-w-72 rounded border px-2 py-1" name="account" required>
+            <option value="">Pilih akun</option>
+            {% for account in accounts %}
+                <option value="{{ account.uuid }}" {% if request.GET.account == account.uuid|stringformat:"s" %}selected{% endif %}>{{ account.code }} - {{ account.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <button class="rounded bg-slate-900 px-3 py-2 text-white">Tampilkan</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="xlsx" {% if not ledger %}disabled{% endif %}>Excel</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="pdf" {% if not ledger %}disabled{% endif %}>PDF</button>
+</form>
+
+{% if ledger %}
+<div class="mb-3 rounded border bg-white px-4 py-3 text-sm">
+    <div class="font-semibold">{{ ledger.account.code }} - {{ ledger.account.name }}</div>
+    <div class="text-slate-600">Saldo awal: <span class="font-medium text-slate-900">{{ ledger.opening_balance|thousand_id }}</span></div>
+</div>
 <div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm">
-<thead class="bg-slate-100 text-left"><tr><th class="p-2">Tanggal</th><th class="p-2">Nomor</th><th class="p-2">Akun</th><th class="p-2">Keterangan</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Kredit</th></tr></thead>
-<tbody>{% for line in lines %}<tr class="border-t"><td class="p-2">{{ line.entry.date }}</td><td class="p-2"><a class="text-blue-700" href="{% url 'accounting:journal_detail' line.entry.uuid %}">{{ line.entry.number }}</a></td><td class="p-2">{{ line.account.code }} - {{ line.account.name }}</td><td class="p-2">{{ line.description }}</td><td class="p-2 text-right">{{ line.debit|thousand_id }}</td><td class="p-2 text-right">{{ line.credit|thousand_id }}</td></tr>{% endfor %}</tbody>
+<thead class="bg-slate-100 text-left"><tr><th class="p-2">Tanggal</th><th class="p-2">Nomor</th><th class="p-2">Keterangan</th><th class="p-2 text-right">Debit</th><th class="p-2 text-right">Kredit</th><th class="p-2 text-right">Saldo</th></tr></thead>
+<tbody>
+    <tr class="border-t bg-slate-50 font-medium"><td class="p-2" colspan="5">Saldo Awal</td><td class="p-2 text-right">{{ ledger.opening_balance|thousand_id }}</td></tr>
+    {% for line in lines %}
+        <tr class="border-t"><td class="p-2">{{ line.entry.date }}</td><td class="p-2"><a class="text-blue-700" href="{% url 'accounting:journal_detail' line.entry.uuid %}">{{ line.entry.number }}</a></td><td class="p-2">{{ line.description }}</td><td class="p-2 text-right">{{ line.debit|thousand_id }}</td><td class="p-2 text-right">{{ line.credit|thousand_id }}</td><td class="p-2 text-right">{{ line.running_balance|thousand_id }}</td></tr>
+    {% endfor %}
+    <tr class="border-t bg-slate-50 font-medium"><td class="p-2" colspan="3">Total Mutasi</td><td class="p-2 text-right">{{ ledger.total_debit|thousand_id }}</td><td class="p-2 text-right">{{ ledger.total_credit|thousand_id }}</td><td class="p-2"></td></tr>
+    <tr class="border-t bg-slate-100 font-semibold"><td class="p-2" colspan="5">Saldo Akhir</td><td class="p-2 text-right">{{ ledger.closing_balance|thousand_id }}</td></tr>
+</tbody>
 </table></div>
 {% if page_obj.paginator.count %}
     <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
         <div class="text-slate-600">
-            Menampilkan {{ page_obj.start_index }}-{{ page_obj.end_index }} dari {{ page_obj.paginator.count }} baris buku besar
+            Menampilkan {{ page_obj.start_index }}-{{ page_obj.end_index }} dari {{ page_obj.paginator.count }} mutasi buku besar
         </div>
         {% if page_obj.paginator.num_pages > 1 %}
             <div class="flex items-center gap-2">
@@ -32,6 +66,9 @@
         {% endif %}
     </div>
 {% else %}
-    <div class="mt-4 rounded border bg-white px-4 py-3 text-sm text-slate-600">Tidak ada baris buku besar untuk filter ini.</div>
+    <div class="mt-4 rounded border bg-white px-4 py-3 text-sm text-slate-600">Tidak ada mutasi untuk akun dan periode ini.</div>
+{% endif %}
+{% else %}
+    <div class="rounded border bg-white px-4 py-3 text-sm text-slate-600">Pilih salah satu akun untuk menampilkan buku besar.</div>
 {% endif %}
 {% endblock %}

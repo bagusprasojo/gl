@@ -6,7 +6,7 @@ from django.test import Client, TestCase
 
 from accounts.models import User
 from accounting.models import Account, AccountingPeriod, AccountPeriodBalance, CashFlowCategory, FinancialReportTemplate, JournalEntry
-from accounting.services import create_draft_journal, post_journal, close_period, trial_balance, update_draft_journal
+from accounting.services import create_draft_journal, post_journal, close_period, reopen_period, trial_balance, update_draft_journal, delete_draft_journal
 from companies.services import create_company
 
 
@@ -16,6 +16,15 @@ class AccountingCoreTests(TestCase):
         self.user = User.objects.create_user(username='owner', password='secret', company=self.company)
         self.bank = Account.objects.get(company=self.company, code='1120')
         self.modal = Account.objects.get(company=self.company, code='3100')
+
+    def close_periods_before(self, year, month):
+        periods = AccountingPeriod.objects.filter(
+            company=self.company,
+            start_date__lt=date(year, month, 1),
+            status=AccountingPeriod.OPEN,
+        ).order_by('start_date')
+        for period in periods:
+            close_period(period, user=self.user)
 
     def test_company_bootstrap_creates_default_core_data(self):
         self.assertEqual(self.company.base_currency, 'IDR')
@@ -82,6 +91,7 @@ class AccountingCoreTests(TestCase):
             user=self.user,
         )
         period = AccountingPeriod.objects.get(company=self.company, year=2026, month=6)
+        self.close_periods_before(2026, 6)
 
         with self.assertRaises(ValidationError):
             close_period(period, user=self.user)
@@ -101,6 +111,7 @@ class AccountingCoreTests(TestCase):
         )
         post_journal(june_entry, user=self.user)
         june = AccountingPeriod.objects.get(company=self.company, year=2026, month=6)
+        self.close_periods_before(2026, 6)
 
         close_period(june, user=self.user)
 
@@ -124,6 +135,7 @@ class AccountingCoreTests(TestCase):
             user=self.user,
         )
         post_journal(june_entry, user=self.user)
+        self.close_periods_before(2026, 6)
         close_period(AccountingPeriod.objects.get(company=self.company, year=2026, month=6), user=self.user)
 
         july_entry = create_draft_journal(
@@ -145,6 +157,25 @@ class AccountingCoreTests(TestCase):
         self.assertEqual(bank_balance.opening_debit, 1000000)
         self.assertEqual(bank_balance.movement_debit, 500000)
         self.assertEqual(bank_balance.closing_debit, 1500000)
+
+    def test_close_period_must_follow_latest_closed_period(self):
+        june = AccountingPeriod.objects.get(company=self.company, year=2026, month=6)
+
+        with self.assertRaisesMessage(ValidationError, 'Close period 2026-01 first.'):
+            close_period(june, user=self.user)
+
+    def test_only_latest_closed_period_can_be_reopened(self):
+        self.close_periods_before(2026, 3)
+        january = AccountingPeriod.objects.get(company=self.company, year=2026, month=1)
+        february = AccountingPeriod.objects.get(company=self.company, year=2026, month=2)
+
+        with self.assertRaisesMessage(ValidationError, 'Only the latest closed period can be reopened.'):
+            reopen_period(january, user=self.user)
+
+        reopened = reopen_period(february, user=self.user)
+
+        self.assertEqual(reopened.status, AccountingPeriod.OPEN)
+        self.assertFalse(AccountPeriodBalance.objects.filter(period=february).exists())
 
     def test_seed_sample_transactions_creates_twenty_five_posted_journals_once(self):
         call_command(
@@ -218,6 +249,41 @@ class AccountingCoreTests(TestCase):
         self.assertEqual(entry.total_debit, entry.total_credit)
         self.assertEqual(entry.total_debit, 1500000)
 
+    def test_draft_journal_can_be_deleted(self):
+        entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Draft akan dihapus',
+            [
+                {'account': self.bank, 'debit': '1000000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '1000000'},
+            ],
+            user=self.user,
+        )
+
+        deleted_number = delete_draft_journal(entry, user=self.user)
+
+        self.assertEqual(deleted_number, entry.number)
+        self.assertFalse(JournalEntry.objects.filter(pk=entry.pk).exists())
+
+    def test_posted_journal_cannot_be_deleted(self):
+        entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Posted tidak boleh dihapus',
+            [
+                {'account': self.bank, 'debit': '1000000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '1000000'},
+            ],
+            user=self.user,
+        )
+        post_journal(entry, user=self.user)
+
+        with self.assertRaisesMessage(ValidationError, 'Only draft journals can be deleted.'):
+            delete_draft_journal(entry, user=self.user)
+
+        self.assertTrue(JournalEntry.objects.filter(pk=entry.pk).exists())
+
     def test_posted_journal_edit_page_redirects_to_detail(self):
         entry = create_draft_journal(
             self.company,
@@ -236,6 +302,25 @@ class AccountingCoreTests(TestCase):
         response = client.get(f'/accounting/journals/{entry.uuid}/edit/')
 
         self.assertRedirects(response, f'/accounting/journals/{entry.uuid}/')
+
+    def test_draft_journal_delete_view_redirects_to_list(self):
+        entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Draft delete view',
+            [
+                {'account': self.bank, 'debit': '1000000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '1000000'},
+            ],
+            user=self.user,
+        )
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.post(f'/accounting/journals/{entry.uuid}/delete/')
+
+        self.assertRedirects(response, '/accounting/journals/')
+        self.assertFalse(JournalEntry.objects.filter(pk=entry.pk).exists())
 
     def test_journal_list_is_paginated_by_twenty_rows(self):
         for index in range(21):
@@ -259,6 +344,39 @@ class AccountingCoreTests(TestCase):
         self.assertEqual(len(page_one.context['journals']), 20)
         self.assertContains(page_two, 'Menampilkan 21-21 dari 21 jurnal')
         self.assertEqual(len(page_two.context['journals']), 1)
+
+    def test_journal_list_filters_by_status_and_search_query(self):
+        draft_entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Memo unik draft',
+            [
+                {'account': self.bank, 'debit': '1000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '1000'},
+            ],
+            user=self.user,
+        )
+        posted_entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 16),
+            'Memo unik posted',
+            [
+                {'account': self.bank, 'debit': '2000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '2000'},
+            ],
+            user=self.user,
+        )
+        post_journal(posted_entry, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        draft_response = client.get('/accounting/journals/?status=draft')
+        posted_search_response = client.get('/accounting/journals/?status=posted&q=unik+posted')
+
+        self.assertContains(draft_response, draft_entry.number)
+        self.assertNotContains(draft_response, posted_entry.number)
+        self.assertContains(posted_search_response, posted_entry.number)
+        self.assertNotContains(posted_search_response, draft_entry.number)
 
     def test_income_statement_uses_report_template(self):
         entry = create_draft_journal(
@@ -336,9 +454,9 @@ class AccountingCoreTests(TestCase):
         self.assertContains(response, 'Pembelian/penjualan aset tetap')
         self.assertContains(response, 'Pinjaman diterima/dibayar')
 
-    def test_general_ledger_is_paginated_and_core_journal_number_links_to_detail(self):
+    def test_general_ledger_requires_account_and_shows_running_balance(self):
         first_entry = None
-        for index in range(11):
+        for index in range(21):
             entry = create_draft_journal(
                 self.company,
                 date(2026, 6, 15),
@@ -355,12 +473,18 @@ class AccountingCoreTests(TestCase):
         client.force_login(self.user)
 
         page_one = client.get('/accounting/reports/general-ledger/')
-        page_two = client.get('/accounting/reports/general-ledger/?page=2')
+        page_one_filtered = client.get(f'/accounting/reports/general-ledger/?account={self.bank.uuid}')
+        page_two = client.get(f'/accounting/reports/general-ledger/?account={self.bank.uuid}&page=2')
 
-        self.assertContains(page_one, 'Menampilkan 1-20 dari 22 baris buku besar')
-        self.assertEqual(len(page_one.context['lines']), 20)
-        self.assertContains(page_two, 'Menampilkan 21-22 dari 22 baris buku besar')
-        self.assertEqual(len(page_two.context['lines']), 2)
-        self.assertContains(page_one, f'/accounting/journals/{first_entry.uuid}/')
+        self.assertContains(page_one, 'Pilih salah satu akun untuk menampilkan buku besar.')
+        self.assertIsNone(page_one.context['ledger'])
+        self.assertContains(page_one_filtered, 'Saldo Awal')
+        self.assertContains(page_one_filtered, 'Saldo Akhir')
+        self.assertContains(page_one_filtered, 'Menampilkan 1-20 dari 21 mutasi buku besar')
+        self.assertEqual(len(page_one_filtered.context['lines']), 20)
+        self.assertEqual(page_one_filtered.context['ledger']['closing_balance'], 21000)
+        self.assertContains(page_two, 'Menampilkan 21-21 dari 21 mutasi buku besar')
+        self.assertEqual(len(page_two.context['lines']), 1)
+        self.assertContains(page_one_filtered, f'/accounting/journals/{first_entry.uuid}/')
 
 # Create your tests here.

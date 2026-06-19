@@ -4,6 +4,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 
 from accounting.exports import export_financial_statement, export_rows_pdf, export_rows_xlsx
@@ -20,8 +21,12 @@ from accounting.services import (
     create_draft_journal,
     trial_balance,
     update_draft_journal,
+    delete_draft_journal,
     render_financial_report,
     render_cash_flow_statement,
+    get_latest_closed_period,
+    get_next_closeable_period,
+    reopen_period,
 )
 from accounting.models import FinancialReportTemplate
 from modules.models import ModuleRegistry
@@ -123,11 +128,23 @@ def account_list(request):
 def journal_list(request):
     company = _company(request)
     start_date, end_date = _date_filters(request)
+    status = request.GET.get('status', '')
+    search_query = request.GET.get('q', '').strip()
     journals = JournalEntry.objects.filter(company=company).select_related('period').order_by('-date', '-id')
     if start_date:
         journals = journals.filter(date__gte=start_date)
     if end_date:
         journals = journals.filter(date__lte=end_date)
+    if status in [JournalEntry.DRAFT, JournalEntry.POSTED, JournalEntry.REVERSED]:
+        journals = journals.filter(status=status)
+    if search_query:
+        journals = journals.filter(
+            Q(number__icontains=search_query)
+            | Q(memo__icontains=search_query)
+            | Q(source_module__icontains=search_query)
+            | Q(source_type__icontains=search_query)
+            | Q(source_id__icontains=search_query)
+        )
     paginator = Paginator(journals, 20)
     page_obj = paginator.get_page(request.GET.get('page'))
     query_params = request.GET.copy()
@@ -139,6 +156,7 @@ def journal_list(request):
             'journals': page_obj.object_list,
             'page_obj': page_obj,
             'query_string': query_params.urlencode(),
+            'status_choices': JournalEntry._meta.get_field('status').choices,
         },
     )
 
@@ -256,6 +274,19 @@ def journal_post(request, uuid):
 
 
 @login_required
+def journal_delete(request, uuid):
+    entry = get_object_or_404(JournalEntry, uuid=uuid, company=_company(request))
+    if request.method == 'POST':
+        try:
+            number = delete_draft_journal(entry, user=request.user)
+            messages.success(request, f'Jurnal {number} dihapus.')
+            return redirect('accounting:journal_list')
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0])
+    return redirect('accounting:journal_detail', uuid=entry.uuid)
+
+
+@login_required
 def journal_reverse(request, uuid):
     entry = get_object_or_404(JournalEntry, uuid=uuid, company=_company(request))
     if request.method == 'POST':
@@ -270,7 +301,13 @@ def journal_reverse(request, uuid):
 
 @login_required
 def period_list(request):
-    periods = AccountingPeriod.objects.filter(company=_company(request)).order_by('-year', '-month')
+    company = _company(request)
+    periods = list(AccountingPeriod.objects.filter(company=company).order_by('-year', '-month'))
+    next_closeable_period = get_next_closeable_period(company)
+    latest_closed_period = get_latest_closed_period(company)
+    for period in periods:
+        period.can_close = bool(next_closeable_period and period.pk == next_closeable_period.pk)
+        period.can_reopen = bool(latest_closed_period and period.pk == latest_closed_period.pk)
     return render(request, 'accounting/period_list.html', {'periods': periods})
 
 
@@ -281,6 +318,18 @@ def period_close(request, uuid):
         try:
             close_period(period, user=request.user)
             messages.success(request, f'Periode {period.year}-{period.month:02d} ditutup.')
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0])
+    return redirect('accounting:period_list')
+
+
+@login_required
+def period_reopen(request, uuid):
+    period = get_object_or_404(AccountingPeriod, uuid=uuid, company=_company(request))
+    if request.method == 'POST':
+        try:
+            reopen_period(period, user=request.user)
+            messages.success(request, f'Periode {period.year}-{period.month:02d} dibuka ulang.')
         except ValidationError as exc:
             messages.error(request, exc.messages[0])
     return redirect('accounting:period_list')
@@ -303,12 +352,37 @@ def _export(request, filename, title, headers, rows):
 
 @login_required
 def report_general_ledger(request):
+    company = _company(request)
     start, end = _date_filters(request)
     account_uuid = request.GET.get('account')
-    account = Account.objects.filter(company=_company(request), uuid=account_uuid).first() if account_uuid else None
-    lines = general_ledger(_company(request), account=account, start_date=start, end_date=end)
-    rows = [[line.entry.date, line.entry.number, line.account.code, line.account.name, line.description, line.debit, line.credit] for line in lines]
-    exported = _export(request, 'buku-besar', 'Buku Besar', ['Tanggal', 'No Jurnal', 'Kode', 'Akun', 'Keterangan', 'Debit', 'Kredit'], rows)
+    account = Account.objects.filter(company=company, uuid=account_uuid).first() if account_uuid else None
+    ledger = general_ledger(company, account=account, start_date=start, end_date=end)
+    lines = ledger['lines'] if ledger else []
+    rows = []
+    if ledger:
+        rows.append(['', '', account.code, account.name, 'Saldo Awal', '', '', ledger['opening_balance']])
+        rows.extend([
+            [
+                line.entry.date,
+                line.entry.number,
+                line.account.code,
+                line.account.name,
+                line.description,
+                line.debit,
+                line.credit,
+                line.running_balance,
+            ]
+            for line in lines
+        ])
+        rows.append(['', '', account.code, account.name, 'Total Mutasi', ledger['total_debit'], ledger['total_credit'], ''])
+        rows.append(['', '', account.code, account.name, 'Saldo Akhir', '', '', ledger['closing_balance']])
+    exported = _export(
+        request,
+        'buku-besar',
+        'Buku Besar',
+        ['Tanggal', 'No Jurnal', 'Kode', 'Akun', 'Keterangan', 'Debit', 'Kredit', 'Saldo'],
+        rows,
+    )
     if exported:
         return exported
     paginator = Paginator(lines, 20)
@@ -319,8 +393,10 @@ def report_general_ledger(request):
         request,
         'accounting/report_general_ledger.html',
         {
+            'ledger': ledger,
             'lines': page_obj.object_list,
-            'accounts': account_choices(_company(request)),
+            'accounts': account_choices(company),
+            'selected_account': account,
             'page_obj': page_obj,
             'query_string': query_params.urlencode(),
         },

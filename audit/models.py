@@ -7,6 +7,7 @@ from django.db import models
 class AuditLog(models.Model):
     CREATE = 'create'
     UPDATE = 'update'
+    DELETE = 'delete'
     POST = 'post'
     REVERSE = 'reverse'
     CLOSE_PERIOD = 'close_period'
@@ -16,6 +17,7 @@ class AuditLog(models.Model):
     ACTION_CHOICES = [
         (CREATE, 'Create'),
         (UPDATE, 'Update'),
+        (DELETE, 'Delete'),
         (POST, 'Post'),
         (REVERSE, 'Reverse'),
         (CLOSE_PERIOD, 'Close period'),

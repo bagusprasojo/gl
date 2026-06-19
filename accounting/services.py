@@ -308,6 +308,21 @@ def update_draft_journal(entry, entry_date, memo, lines, user=None):
 
 
 @transaction.atomic
+def delete_draft_journal(entry, user=None):
+    entry = JournalEntry.objects.select_for_update().get(pk=entry.pk)
+    if entry.status != JournalEntry.DRAFT:
+        raise ValidationError('Only draft journals can be deleted.')
+    if entry.period.status == AccountingPeriod.CLOSED:
+        raise ValidationError('Cannot delete journal in a closed period.')
+
+    company = entry.company
+    number = entry.number
+    write_audit(company, user, AuditLog.DELETE, entry, number)
+    entry.delete()
+    return number
+
+
+@transaction.atomic
 def post_journal(entry, user=None):
     entry = JournalEntry.objects.select_for_update().get(pk=entry.pk)
     if entry.status != JournalEntry.DRAFT:
@@ -360,6 +375,13 @@ def reverse_journal(entry, user=None, reversal_date=None, memo=''):
 @transaction.atomic
 def close_period(period, user=None):
     period = AccountingPeriod.objects.select_for_update().get(pk=period.pk)
+    if period.status != AccountingPeriod.OPEN:
+        raise ValidationError('Only open periods can be closed.')
+    next_period = get_next_closeable_period(period.company)
+    if not next_period or next_period.pk != period.pk:
+        if next_period:
+            raise ValidationError(f'Close period {next_period.year}-{next_period.month:02d} first.')
+        raise ValidationError('No open period is available to close.')
     drafts = JournalEntry.objects.filter(period=period, status=JournalEntry.DRAFT).exists()
     if drafts:
         raise ValidationError('Cannot close period with draft journals.')
@@ -371,6 +393,40 @@ def close_period(period, user=None):
     ensure_year_periods(period.company, period.year + 1 if period.month == 12 else period.year)
     write_audit(period.company, user, AuditLog.CLOSE_PERIOD, period, str(period))
     return period
+
+
+@transaction.atomic
+def reopen_period(period, user=None):
+    period = AccountingPeriod.objects.select_for_update().get(pk=period.pk)
+    latest_closed = get_latest_closed_period(period.company)
+    if period.status != AccountingPeriod.CLOSED:
+        raise ValidationError('Only closed periods can be reopened.')
+    if not latest_closed or latest_closed.pk != period.pk:
+        raise ValidationError('Only the latest closed period can be reopened.')
+
+    AccountPeriodBalance.objects.filter(period=period).delete()
+    period.status = AccountingPeriod.OPEN
+    period.closed_by = None
+    period.closed_at = None
+    period.save(update_fields=['status', 'closed_by', 'closed_at'])
+    write_audit(period.company, user, AuditLog.UPDATE, period, f'Reopened {period}')
+    return period
+
+
+def get_latest_closed_period(company):
+    return (
+        AccountingPeriod.objects.filter(company=company, status=AccountingPeriod.CLOSED)
+        .order_by('-end_date')
+        .first()
+    )
+
+
+def get_next_closeable_period(company):
+    latest_closed = get_latest_closed_period(company)
+    periods = AccountingPeriod.objects.filter(company=company, status=AccountingPeriod.OPEN)
+    if latest_closed:
+        periods = periods.filter(start_date__gt=latest_closed.end_date)
+    return periods.order_by('start_date').first()
 
 
 def rebuild_account_period_balances(period):
@@ -517,14 +573,48 @@ def trial_balance(company, start_date=None, end_date=None):
 
 
 def general_ledger(company, account=None, start_date=None, end_date=None):
-    qs = JournalLine.objects.filter(entry__company=company, entry__status__in=[JournalEntry.POSTED, JournalEntry.REVERSED])
-    if account:
-        qs = qs.filter(account=account)
+    if account is None:
+        return None
+
+    opening_signed = Decimal('0')
+    if start_date:
+        opening_rows = account_balances(company, end_date=start_date - timedelta(days=1))
+        for row in opening_rows:
+            if row['account'].pk == account.pk:
+                opening_signed = row['debit'] - row['credit']
+                break
+
+    qs = JournalLine.objects.filter(
+        entry__company=company,
+        entry__status__in=[JournalEntry.POSTED, JournalEntry.REVERSED],
+        account=account,
+    )
     if start_date:
         qs = qs.filter(entry__date__gte=start_date)
     if end_date:
         qs = qs.filter(entry__date__lte=end_date)
-    return qs.select_related('entry', 'account').order_by('account__code', 'entry__date', 'entry__number', 'id')
+
+    running_signed = opening_signed
+    lines = []
+    total_debit = Decimal('0')
+    total_credit = Decimal('0')
+    for line in qs.select_related('entry', 'account').order_by('entry__date', 'entry__number', 'id'):
+        total_debit += line.debit
+        total_credit += line.credit
+        running_signed += line.debit - line.credit
+        line.running_balance = running_signed if account.normal_balance == Account.DEBIT else -running_signed
+        lines.append(line)
+
+    opening_balance = opening_signed if account.normal_balance == Account.DEBIT else -opening_signed
+    closing_balance = running_signed if account.normal_balance == Account.DEBIT else -running_signed
+    return {
+        'account': account,
+        'opening_balance': opening_balance,
+        'total_debit': total_debit,
+        'total_credit': total_credit,
+        'closing_balance': closing_balance,
+        'lines': lines,
+    }
 
 
 def income_statement(company, start_date=None, end_date=None):

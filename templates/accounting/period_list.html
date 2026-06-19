@@ -12,8 +12,10 @@
                     <td class="p-2">{{ period.start_date }} s/d {{ period.end_date }}</td>
                     <td class="p-2">{{ period.get_status_display }}</td>
                     <td class="p-2 text-right">
-                        {% if period.status == 'open' %}
+                        {% if period.can_close %}
                             <form method="post" action="{% url 'accounting:period_close' period.uuid %}">{% csrf_token %}<button class="text-blue-700">Closing</button></form>
+                        {% elif period.can_reopen %}
+                            <form method="post" action="{% url 'accounting:period_reopen' period.uuid %}">{% csrf_token %}<button class="text-blue-700">Open</button></form>
                         {% endif %}
                     </td>
                 </tr>
