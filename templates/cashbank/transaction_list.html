@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Transaksi Kas/Bank{% endblock %}
+{% block content %}
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <h1 class="text-xl font-semibold">Transaksi Kas/Bank</h1>
+    <div class="flex gap-2 text-sm">
+        <a class="rounded border bg-white px-3 py-2" href="{% url 'cashbank:account_list' %}">Rekening</a>
+        <a class="rounded bg-slate-900 px-3 py-2 text-white" href="{% url 'cashbank:incoming_create' %}">Kas Masuk</a>
+        <a class="rounded bg-slate-900 px-3 py-2 text-white" href="{% url 'cashbank:outgoing_create' %}">Kas Keluar</a>
+        <a class="rounded border bg-white px-3 py-2" href="{% url 'cashbank:transfer_create' %}">Transfer</a>
+    </div>
+</div>
+<form method="get" class="mb-4 flex flex-wrap items-end gap-3 rounded border bg-white p-3 text-sm">
+    <div><label class="block">Dari</label><input class="rounded border px-2 py-1" type="date" name="start_date" value="{{ request.GET.start_date }}"></div>
+    <div><label class="block">Sampai</label><input class="rounded border px-2 py-1" type="date" name="end_date" value="{{ request.GET.end_date }}"></div>
+    <div><label class="block">Status</label><select class="rounded border px-2 py-1" name="status"><option value="">Semua</option>{% for value, label in status_choices %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <button class="rounded bg-slate-900 px-3 py-2 text-white">Tampilkan</button>
+    <a class="rounded border bg-white px-3 py-2" href="{% url 'cashbank:transaction_list' %}">Reset</a>
+</form>
+<div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm"><thead class="bg-slate-100 text-left"><tr><th class="p-2">Tanggal</th><th class="p-2">Nomor</th><th class="p-2">Tipe</th><th class="p-2">Rekening</th><th class="p-2 text-right">Nilai</th><th class="p-2">Status</th><th class="p-2"></th></tr></thead><tbody>{% for trx in transactions %}<tr class="border-t"><td class="p-2">{{ trx.date }}</td><td class="p-2">{{ trx.number }}</td><td class="p-2">{{ trx.get_transaction_type_display }}</td><td class="p-2">{% if trx.transaction_type == 'transfer' %}{{ trx.from_account.name }} -> {{ trx.to_account.name }}{% else %}{{ trx.cash_account.name }}{% endif %}</td><td class="p-2 text-right">{{ trx.amount|thousand_id }}</td><td class="p-2">{{ trx.get_status_display }}</td><td class="p-2 text-right"><a class="text-blue-700" href="{% url 'cashbank:transaction_detail' trx.uuid %}">Detail</a></td></tr>{% empty %}<tr><td class="p-3 text-slate-600" colspan="7">Belum ada transaksi.</td></tr>{% endfor %}</tbody></table></div>
+{% if page_obj.paginator.num_pages > 1 %}<div class="mt-4 flex justify-end gap-2 text-sm">{% if page_obj.has_previous %}<a class="rounded border bg-white px-3 py-2" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}">Sebelumnya</a>{% endif %}<span class="px-2 py-2">Halaman {{ page_obj.number }} dari {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a class="rounded border bg-white px-3 py-2" href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}">Berikutnya</a>{% endif %}</div>{% endif %}
+{% endblock %}

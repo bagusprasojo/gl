@@ -5,7 +5,7 @@
 <div class="overflow-hidden rounded border bg-white">
     <table class="w-full text-sm">
         <thead class="bg-slate-100 text-left">
-            <tr><th class="p-2">Kode</th><th class="p-2">Nama</th><th class="p-2">Tipe</th><th class="p-2">Normal</th><th class="p-2">Kas/Bank</th></tr>
+            <tr><th class="p-2">Kode</th><th class="p-2">Nama</th><th class="p-2">Tipe</th><th class="p-2">Normal</th><th class="p-2">Kas/Bank</th><th class="p-2">Bisa Diposting</th></tr>
         </thead>
         <tbody>
             {% for account in accounts %}
@@ -14,7 +14,7 @@
                     <td class="p-2">{{ account.name }}</td>
                     <td class="p-2">{{ account.get_account_type_display }}</td>
                     <td class="p-2">{{ account.get_normal_balance_display }}</td>
-                    <td class="p-2">{{ account.is_cash_equivalent|yesno:"Ya,Tidak" }}</td>
+                    <td class="p-2">{{ account.is_cash_equivalent|yesno:"Ya,Tidak" }}</td>`r`n                    <td class="p-2">{{ account.is_postable|yesno:"Ya,Tidak" }}</td>
                 </tr>
             {% endfor %}
         </tbody>

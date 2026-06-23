@@ -8,6 +8,7 @@ from accounting.models import (
     CashFlowCategory,
     FinancialReportLine,
     FinancialReportTemplate,
+    FiscalYearClosing,
     JournalEntry,
     JournalLine,
 )
@@ -15,8 +16,8 @@ from accounting.models import (
 
 @admin.register(Account)
 class AccountAdmin(admin.ModelAdmin):
-    list_display = ('company', 'code', 'name', 'account_type', 'normal_balance', 'is_cash_equivalent', 'is_active')
-    list_filter = ('company', 'account_type', 'normal_balance', 'is_cash_equivalent')
+    list_display = ('company', 'code', 'name', 'account_type', 'normal_balance', 'is_cash_equivalent', 'is_postable', 'is_active')
+    list_filter = ('company', 'account_type', 'normal_balance', 'is_cash_equivalent', 'is_postable')
     search_fields = ('code', 'name')
 
 
@@ -90,4 +91,9 @@ class AccountCashFlowMappingAdmin(admin.ModelAdmin):
     list_filter = ('company', 'category__activity_type', 'category')
     search_fields = ('account__code', 'account__name', 'category__code', 'category__name')
 
+@admin.register(FiscalYearClosing)
+class FiscalYearClosingAdmin(admin.ModelAdmin):
+    list_display = ('company', 'fiscal_year', 'start_date', 'end_date', 'closing_entry', 'closed_at')
+    list_filter = ('company', 'fiscal_year')
+    search_fields = ('closing_entry__number',)
 # Register your models here.

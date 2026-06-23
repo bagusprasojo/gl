@@ -19,9 +19,13 @@ from accounting.models import (
     CashFlowCategory,
     FinancialReportLine,
     FinancialReportTemplate,
+    FiscalYearClosing,
     JournalEntry,
     JournalLine,
 )
+
+
+NON_POSTABLE_DEFAULT_CODES = {'1000', '1100', '2000', '3000', '4000', '5000', '6000'}
 
 
 DEFAULT_COA = [
@@ -66,8 +70,10 @@ def create_default_accounts(company):
                 'account_type': account_type,
                 'normal_balance': normal_balance,
                 'is_cash_equivalent': is_cash,
+                'is_postable': code not in NON_POSTABLE_DEFAULT_CODES,
             },
         )
+    Account.objects.filter(company=company, code__in=NON_POSTABLE_DEFAULT_CODES).update(is_postable=False)
 
 
 DEFAULT_INCOME_STATEMENT_TEMPLATE = [
@@ -385,6 +391,12 @@ def close_period(period, user=None):
     drafts = JournalEntry.objects.filter(period=period, status=JournalEntry.DRAFT).exists()
     if drafts:
         raise ValidationError('Cannot close period with draft journals.')
+    if is_fiscal_year_end_period(period):
+        fiscal_year = fiscal_year_for_date(period.company, period.end_date)
+        start_date, end_date = fiscal_year_bounds(period.company, fiscal_year)
+        closing_exists = FiscalYearClosing.objects.filter(company=period.company, fiscal_year=fiscal_year).exists()
+        if not closing_exists and fiscal_year_has_income_statement_balance(period.company, start_date, end_date):
+            raise ValidationError(f'Close fiscal year {fiscal_year} first.')
     rebuild_account_period_balances(period)
     period.status = AccountingPeriod.CLOSED
     period.closed_by = user if getattr(user, 'is_authenticated', False) else None
@@ -428,6 +440,131 @@ def get_next_closeable_period(company):
         periods = periods.filter(start_date__gt=latest_closed.end_date)
     return periods.order_by('start_date').first()
 
+def fiscal_year_bounds(company, fiscal_year):
+    start_month = company.fiscal_year_start_month
+    start_year = fiscal_year if start_month == 1 else fiscal_year - 1
+    start_date = date(start_year, start_month, 1)
+    end_month = 12 if start_month == 1 else start_month - 1
+    end_year = fiscal_year
+    end_day = calendar.monthrange(end_year, end_month)[1]
+    return start_date, date(end_year, end_month, end_day)
+
+
+def fiscal_year_for_date(company, value):
+    if company.fiscal_year_start_month == 1:
+        return value.year
+    return value.year + 1 if value.month >= company.fiscal_year_start_month else value.year
+
+
+def is_fiscal_year_end_period(period):
+    fiscal_year = fiscal_year_for_date(period.company, period.end_date)
+    _, end_date = fiscal_year_bounds(period.company, fiscal_year)
+    return period.end_date == end_date
+
+
+def fiscal_year_has_income_statement_balance(company, start_date, end_date):
+    return any(
+        row['debit'] or row['credit']
+        for row in account_balances(company, start_date=start_date, end_date=end_date)
+        if row['account'].account_type in [Account.REVENUE, Account.EXPENSE]
+    )
+
+
+def get_next_closeable_fiscal_year(company):
+    latest = FiscalYearClosing.objects.filter(company=company).order_by('-fiscal_year').first()
+    if latest:
+        return latest.fiscal_year + 1
+    first_period = AccountingPeriod.objects.filter(company=company).order_by('start_date').first()
+    if not first_period:
+        return date.today().year
+    return fiscal_year_for_date(company, first_period.end_date)
+
+
+@transaction.atomic
+def close_fiscal_year(company, fiscal_year, user=None):
+    if FiscalYearClosing.objects.filter(company=company, fiscal_year=fiscal_year).exists():
+        raise ValidationError('Fiscal year is already closed.')
+
+    start_date, end_date = fiscal_year_bounds(company, fiscal_year)
+    ensure_year_periods(company, start_date.year)
+    ensure_year_periods(company, end_date.year)
+    periods = list(
+        AccountingPeriod.objects.filter(
+            company=company,
+            start_date__gte=start_date,
+            end_date__lte=end_date,
+        ).order_by('start_date')
+    )
+    if len(periods) != 12:
+        raise ValidationError('Fiscal year must have 12 accounting periods.')
+
+    final_period = periods[-1]
+    unclosed_previous = [period for period in periods[:-1] if period.status != AccountingPeriod.CLOSED]
+    if unclosed_previous:
+        period = unclosed_previous[0]
+        raise ValidationError(f'Close monthly period {period.year}-{period.month:02d} first.')
+    if final_period.status != AccountingPeriod.OPEN:
+        raise ValidationError('Final fiscal period must be open for annual closing journal.')
+
+    drafts = JournalEntry.objects.filter(
+        company=company,
+        date__gte=start_date,
+        date__lte=end_date,
+        status=JournalEntry.DRAFT,
+    ).exists()
+    if drafts:
+        raise ValidationError('Cannot close fiscal year with draft journals.')
+
+    retained_earnings = Account.objects.filter(company=company, code='3300', is_postable=True).first()
+    if not retained_earnings:
+        raise ValidationError('Retained earnings account 3300 must exist and be postable.')
+
+    lines = []
+    retained_debit = Decimal('0')
+    retained_credit = Decimal('0')
+    for row in account_balances(company, start_date=start_date, end_date=end_date):
+        account = row['account']
+        if account.account_type not in [Account.REVENUE, Account.EXPENSE]:
+            continue
+        signed_balance = row['debit'] - row['credit']
+        if signed_balance > 0:
+            amount = signed_balance
+            lines.append({'account': account, 'description': f'Closing FY {fiscal_year}', 'debit': '0', 'credit': amount})
+            retained_debit += amount
+        elif signed_balance < 0:
+            amount = abs(signed_balance)
+            lines.append({'account': account, 'description': f'Closing FY {fiscal_year}', 'debit': amount, 'credit': '0'})
+            retained_credit += amount
+
+    net_to_retained = retained_credit - retained_debit
+    if not lines or net_to_retained == 0:
+        raise ValidationError('No income statement balance to close.')
+    if net_to_retained > 0:
+        lines.append({'account': retained_earnings, 'description': f'Closing FY {fiscal_year}', 'debit': '0', 'credit': net_to_retained})
+    else:
+        lines.append({'account': retained_earnings, 'description': f'Closing FY {fiscal_year}', 'debit': abs(net_to_retained), 'credit': '0'})
+
+    entry = create_draft_journal(
+        company,
+        end_date,
+        f'Closing tahun buku {fiscal_year}',
+        lines,
+        user=user,
+        source_module='core',
+        source_type='fiscal_year_closing',
+        source_id=str(fiscal_year),
+    )
+    entry = post_journal(entry, user=user)
+    closing = FiscalYearClosing.objects.create(
+        company=company,
+        fiscal_year=fiscal_year,
+        start_date=start_date,
+        end_date=end_date,
+        closing_entry=entry,
+        closed_by=user if getattr(user, 'is_authenticated', False) else None,
+    )
+    write_audit(company, user, AuditLog.CLOSE_FISCAL_YEAR, closing, f'FY {fiscal_year}')
+    return closing
 
 def rebuild_account_period_balances(period):
     previous_period = (
@@ -565,10 +702,77 @@ def account_balances_from_snapshot(company, snapshot_period, end_date):
 
 def trial_balance(company, start_date=None, end_date=None):
     rows = account_balances(company, start_date, end_date)
+    total_debit = sum((row['debit'] for row in rows), Decimal('0'))
+    total_credit = sum((row['credit'] for row in rows), Decimal('0'))
+    difference = total_debit - total_credit
     return {
         'rows': rows,
-        'total_debit': sum((row['debit'] for row in rows), Decimal('0')),
-        'total_credit': sum((row['credit'] for row in rows), Decimal('0')),
+        'total_debit': total_debit,
+        'total_credit': total_credit,
+        'difference': abs(difference),
+        'is_balanced': difference == 0,
+    }
+
+
+def six_column_trial_balance(company, start_date, end_date):
+    opening_rows = account_balances(company, end_date=start_date - timedelta(days=1)) if start_date else []
+    opening_by_account = {
+        row['account'].pk: {'debit': row['debit'], 'credit': row['credit']}
+        for row in opening_rows
+    }
+
+    movement_qs = JournalLine.objects.filter(
+        entry__company=company,
+        entry__status__in=[JournalEntry.POSTED, JournalEntry.REVERSED],
+    )
+    if start_date:
+        movement_qs = movement_qs.filter(entry__date__gte=start_date)
+    if end_date:
+        movement_qs = movement_qs.filter(entry__date__lte=end_date)
+    movements = {
+        row['account_id']: {
+            'debit': row['debit'] or Decimal('0'),
+            'credit': row['credit'] or Decimal('0'),
+        }
+        for row in movement_qs.values('account_id').annotate(debit=Sum('debit'), credit=Sum('credit'))
+    }
+
+    rows = []
+    totals = {
+        'opening_debit': Decimal('0'),
+        'opening_credit': Decimal('0'),
+        'movement_debit': Decimal('0'),
+        'movement_credit': Decimal('0'),
+        'closing_debit': Decimal('0'),
+        'closing_credit': Decimal('0'),
+    }
+    for account in Account.objects.filter(company=company, is_active=True).order_by('code'):
+        opening_debit = opening_by_account.get(account.pk, {}).get('debit', Decimal('0'))
+        opening_credit = opening_by_account.get(account.pk, {}).get('credit', Decimal('0'))
+        movement_debit = movements.get(account.pk, {}).get('debit', Decimal('0'))
+        movement_credit = movements.get(account.pk, {}).get('credit', Decimal('0'))
+        closing_debit, closing_credit = _side_from_signed_balance(
+            opening_debit - opening_credit + movement_debit - movement_credit
+        )
+        row = {
+            'account': account,
+            'opening_debit': opening_debit,
+            'opening_credit': opening_credit,
+            'movement_debit': movement_debit,
+            'movement_credit': movement_credit,
+            'closing_debit': closing_debit,
+            'closing_credit': closing_credit,
+        }
+        for key in totals:
+            totals[key] += row[key]
+        rows.append(row)
+
+    return {
+        'rows': rows,
+        'totals': totals,
+        'opening_is_balanced': totals['opening_debit'] == totals['opening_credit'],
+        'movement_is_balanced': totals['movement_debit'] == totals['movement_credit'],
+        'closing_is_balanced': totals['closing_debit'] == totals['closing_credit'],
     }
 
 

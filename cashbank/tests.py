@@ -1,0 +1,176 @@
+from datetime import date
+
+from django.core.exceptions import ValidationError
+from django.test import Client, TestCase
+
+from accounts.models import User
+from accounting.models import Account, JournalEntry
+from cashbank.models import CashBankAccount, CashBankTransaction
+from cashbank.services import (
+    cashbank_book,
+    create_cashbank_account,
+    create_cashbank_transaction,
+    create_transfer_transaction,
+    post_cashbank_transaction,
+)
+from companies.services import create_company
+from modules.models import ModuleRegistry
+
+
+class CashBankAddonTests(TestCase):
+    def setUp(self):
+        self.company = create_company('Cashbank UMKM')
+        self.user = User.objects.create_user(username='cashier', password='secret', company=self.company)
+        self.bank = Account.objects.get(company=self.company, code='1120')
+        self.cash = Account.objects.get(company=self.company, code='1110')
+        self.revenue = Account.objects.get(company=self.company, code='4100')
+        self.expense = Account.objects.get(company=self.company, code='6100')
+        self.module = ModuleRegistry.objects.get(company=self.company, key='cash_bank')
+
+    def activate_module(self):
+        self.module.is_active = True
+        self.module.save(update_fields=['is_active'])
+
+    def test_cashbank_service_rejects_when_module_inactive(self):
+        with self.assertRaisesMessage(ValidationError, 'Modul Kas/Bank belum aktif.'):
+            create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+
+    def test_cashbank_menu_and_url_are_blocked_when_inactive(self):
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.get('/cashbank/transactions/')
+
+        self.assertRedirects(response, '/accounting/modules/')
+
+    def test_incoming_transaction_posts_core_journal(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        transaction = create_cashbank_transaction(
+            self.company,
+            CashBankTransaction.INCOMING,
+            date(2026, 6, 15),
+            memo='Penerimaan penjualan',
+            cash_account=cash_account,
+            line_specs=[{'account': self.revenue, 'description': 'Penjualan tunai', 'amount': '1500000'}],
+            user=self.user,
+        )
+
+        posted = post_cashbank_transaction(transaction, user=self.user)
+
+        self.assertEqual(posted.status, CashBankTransaction.POSTED)
+        self.assertEqual(posted.number, 'KM-2026-06-0001')
+        self.assertIsNotNone(posted.journal_entry)
+        self.assertEqual(posted.journal_entry.status, JournalEntry.POSTED)
+        bank_line = posted.journal_entry.lines.get(account=self.bank)
+        revenue_line = posted.journal_entry.lines.get(account=self.revenue)
+        self.assertEqual(bank_line.debit, 1500000)
+        self.assertEqual(revenue_line.credit, 1500000)
+
+    def test_transfer_with_admin_fee_posts_single_journal(self):
+        self.activate_module()
+        bank_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        cash_account = create_cashbank_account(self.company, 'Kas Kecil', self.cash, user=self.user)
+        transaction = create_transfer_transaction(
+            self.company,
+            date(2026, 6, 16),
+            from_account=bank_account,
+            to_account=cash_account,
+            amount='1000000',
+            admin_fee='5000',
+            admin_fee_account=self.expense,
+            memo='Tarik tunai',
+            user=self.user,
+        )
+
+        posted = post_cashbank_transaction(transaction, user=self.user)
+
+        self.assertEqual(posted.number, 'TR-2026-06-0001')
+        lines = {line.account.code: line for line in posted.journal_entry.lines.select_related('account')}
+        self.assertEqual(lines['1110'].debit, 995000)
+        self.assertEqual(lines['6100'].debit, 5000)
+        self.assertEqual(lines['1120'].credit, 1000000)
+        self.assertEqual(posted.journal_entry.lines.count(), 3)
+
+    def test_cashbank_book_uses_cash_equivalent_account_movements(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        transaction = create_cashbank_transaction(
+            self.company,
+            CashBankTransaction.INCOMING,
+            date(2026, 6, 15),
+            memo='Penerimaan penjualan',
+            cash_account=cash_account,
+            line_specs=[{'account': self.revenue, 'description': 'Penjualan tunai', 'amount': '1500000'}],
+            user=self.user,
+        )
+        post_cashbank_transaction(transaction, user=self.user)
+
+        book = cashbank_book(self.company, cash_account, date(2026, 6, 1), date(2026, 6, 30))
+
+        self.assertEqual(book['opening_balance'], 0)
+        self.assertEqual(book['total_in'], 1500000)
+        self.assertEqual(book['total_out'], 0)
+        self.assertEqual(book['closing_balance'], 1500000)
+        self.assertEqual(book['lines'][0]['transaction'].number, 'KM-2026-06-0001')
+    def test_multiple_cashbank_accounts_can_share_one_coa_and_books_stay_separate(self):
+        self.activate_module()
+        mandiri = create_cashbank_account(self.company, 'Bank Mandiri', self.bank, user=self.user)
+        bri = create_cashbank_account(self.company, 'Bank BRI', self.bank, user=self.user)
+        incoming = create_cashbank_transaction(
+            self.company,
+            CashBankTransaction.INCOMING,
+            date(2026, 6, 10),
+            memo='Penerimaan Mandiri',
+            cash_account=mandiri,
+            line_specs=[{'account': self.revenue, 'description': 'Penjualan', 'amount': '2000000'}],
+            user=self.user,
+        )
+        transfer = create_transfer_transaction(
+            self.company,
+            date(2026, 6, 12),
+            from_account=mandiri,
+            to_account=bri,
+            amount='500000',
+            memo='Transfer Mandiri ke BRI',
+            user=self.user,
+        )
+        post_cashbank_transaction(incoming, user=self.user)
+        post_cashbank_transaction(transfer, user=self.user)
+
+        mandiri_book = cashbank_book(self.company, mandiri, date(2026, 6, 1), date(2026, 6, 30))
+        bri_book = cashbank_book(self.company, bri, date(2026, 6, 1), date(2026, 6, 30))
+
+        self.assertEqual(mandiri_book['total_in'], 2000000)
+        self.assertEqual(mandiri_book['total_out'], 500000)
+        self.assertEqual(mandiri_book['closing_balance'], 1500000)
+        self.assertEqual(bri_book['total_in'], 500000)
+        self.assertEqual(bri_book['total_out'], 0)
+        self.assertEqual(bri_book['closing_balance'], 500000)
+        self.assertEqual(len(mandiri_book['lines']), 2)
+        self.assertEqual(len(bri_book['lines']), 1)
+    def test_incoming_outgoing_counter_lines_cannot_use_cashbank_accounts(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+
+        with self.assertRaisesMessage(ValidationError, 'Line account must not be a cash/bank account.'):
+            create_cashbank_transaction(
+                self.company,
+                CashBankTransaction.INCOMING,
+                date(2026, 6, 15),
+                memo='Kas lawan kas ditolak',
+                cash_account=cash_account,
+                line_specs=[{'account': self.cash, 'description': 'Kas kecil', 'amount': '100000'}],
+                user=self.user,
+            )
+
+    def test_cashbank_transaction_form_excludes_cash_equivalent_counter_accounts(self):
+        self.activate_module()
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.get('/cashbank/transactions/incoming/new/')
+
+        self.assertContains(response, self.revenue.name)
+        self.assertNotContains(response, '1120 - Bank')
+        self.assertNotContains(response, '1110 - Kas Kecil')

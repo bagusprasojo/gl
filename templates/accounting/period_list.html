@@ -2,6 +2,26 @@
 {% block title %}Periode{% endblock %}
 {% block content %}
 <h1 class="mb-4 text-xl font-semibold">Periode Akuntansi</h1>
+<div class="mb-4 rounded border bg-white p-4 text-sm">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+            <h2 class="font-semibold">Closing Tahun Buku</h2>
+            <div class="text-slate-600">Tahun buku {{ next_fiscal_year }}: {{ fiscal_start }} s/d {{ fiscal_end }}</div>
+        </div>
+        <form method="post" action="{% url 'accounting:fiscal_year_close' next_fiscal_year %}" onsubmit="return confirm('Tutup tahun buku {{ next_fiscal_year }}?')">
+            {% csrf_token %}
+            <button class="rounded bg-slate-900 px-3 py-2 text-white">Closing Tahun Buku</button>
+        </form>
+    </div>
+    {% if fiscal_year_closings %}
+        <div class="mt-3 text-slate-600">
+            Terakhir ditutup:
+            {% for closing in fiscal_year_closings %}
+                <span class="mr-3">FY {{ closing.fiscal_year }} ({{ closing.closing_entry.number }})</span>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
 <div class="overflow-hidden rounded border bg-white">
     <table class="w-full text-sm">
         <thead class="bg-slate-100 text-left"><tr><th class="p-2">Periode</th><th class="p-2">Tanggal</th><th class="p-2">Status</th><th class="p-2"></th></tr></thead>

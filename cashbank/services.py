@@ -1,0 +1,363 @@
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
+from django.utils import timezone
+
+from accounting.models import Account, JournalEntry
+from accounting.services import create_draft_journal, post_journal, reverse_journal
+from audit.models import AuditLog
+from audit.services import write_audit
+from cashbank.models import CashBankAccount, CashBankTransaction, CashBankTransactionLine
+from modules.models import ModuleRegistry
+
+
+MODULE_KEY = 'cash_bank'
+TYPE_PREFIX = {
+    CashBankTransaction.INCOMING: 'KM',
+    CashBankTransaction.OUTGOING: 'KK',
+    CashBankTransaction.TRANSFER: 'TR',
+}
+
+
+def is_module_active(company):
+    return ModuleRegistry.objects.filter(company=company, key=MODULE_KEY, is_active=True).exists()
+
+
+def ensure_module_active(company):
+    if not is_module_active(company):
+        raise ValidationError('Modul Kas/Bank belum aktif.')
+
+
+def cashbank_account_choices(company):
+    return CashBankAccount.objects.filter(company=company, is_active=True).select_related('account').order_by('name')
+
+
+def counter_account_choices(company):
+    return Account.objects.filter(company=company, is_active=True, is_postable=True, is_cash_equivalent=False).order_by('code')
+
+
+def cash_equivalent_account_choices(company):
+    return Account.objects.filter(company=company, is_active=True, is_postable=True, is_cash_equivalent=True).order_by('code')
+
+
+def next_transaction_number(company, transaction_type, transaction_date):
+    prefix = f'{TYPE_PREFIX[transaction_type]}-{transaction_date:%Y-%m}-'
+    last = (
+        CashBankTransaction.objects.filter(company=company, number__startswith=prefix)
+        .order_by('-number')
+        .first()
+    )
+    sequence = int(last.number[-4:]) + 1 if last else 1
+    return f'{prefix}{sequence:04d}'
+
+
+@transaction.atomic
+def create_cashbank_account(company, name, account, user=None):
+    ensure_module_active(company)
+    cash_account = CashBankAccount(company=company, name=name, account=account)
+    cash_account.full_clean()
+    cash_account.save()
+    write_audit(company, user, AuditLog.CREATE, cash_account, cash_account.name)
+    return cash_account
+
+
+def _validate_line_specs(company, line_specs):
+    if not line_specs:
+        raise ValidationError('Transaction must have at least one line.')
+    normalized = []
+    for spec in line_specs:
+        account = spec['account']
+        amount = Decimal(spec.get('amount') or 0)
+        if account.company_id != company.id:
+            raise ValidationError('Line account must belong to the same company.')
+        if not account.is_postable:
+            raise ValidationError('Line account must be postable.')
+        if account.is_cash_equivalent:
+            raise ValidationError('Line account must not be a cash/bank account. Use transfer for cash/bank movements.')
+        if amount <= 0:
+            raise ValidationError('Line amount must be greater than zero.')
+        normalized.append({
+            'account': account,
+            'description': spec.get('description', ''),
+            'amount': amount,
+        })
+    return normalized
+
+
+@transaction.atomic
+def create_cashbank_transaction(company, transaction_type, transaction_date, memo='', cash_account=None, line_specs=None, counterparty='', user=None):
+    ensure_module_active(company)
+    lines = _validate_line_specs(company, line_specs or [])
+    total = sum((line['amount'] for line in lines), Decimal('0'))
+    if transaction_type not in [CashBankTransaction.INCOMING, CashBankTransaction.OUTGOING]:
+        raise ValidationError('Invalid cash/bank transaction type.')
+    if not cash_account or cash_account.company_id != company.id:
+        raise ValidationError('Cash/bank account is required.')
+
+    transaction_obj = CashBankTransaction.objects.create(
+        company=company,
+        number=next_transaction_number(company, transaction_type, transaction_date),
+        date=transaction_date,
+        transaction_type=transaction_type,
+        cash_account=cash_account,
+        counterparty=counterparty,
+        memo=memo,
+        amount=total,
+        created_by=user if getattr(user, 'is_authenticated', False) else None,
+    )
+    for line in lines:
+        CashBankTransactionLine.objects.create(
+            transaction=transaction_obj,
+            account=line['account'],
+            description=line['description'],
+            amount=line['amount'],
+        ).full_clean()
+    transaction_obj.full_clean()
+    write_audit(company, user, AuditLog.CREATE, transaction_obj, transaction_obj.number)
+    return transaction_obj
+
+
+@transaction.atomic
+def create_transfer_transaction(company, transaction_date, from_account, to_account, amount, memo='', admin_fee=Decimal('0'), admin_fee_account=None, user=None):
+    ensure_module_active(company)
+    amount = Decimal(amount or 0)
+    admin_fee = Decimal(admin_fee or 0)
+    transaction_obj = CashBankTransaction.objects.create(
+        company=company,
+        number=next_transaction_number(company, CashBankTransaction.TRANSFER, transaction_date),
+        date=transaction_date,
+        transaction_type=CashBankTransaction.TRANSFER,
+        from_account=from_account,
+        to_account=to_account,
+        memo=memo,
+        amount=amount,
+        admin_fee=admin_fee,
+        admin_fee_account=admin_fee_account,
+        created_by=user if getattr(user, 'is_authenticated', False) else None,
+    )
+    transaction_obj.full_clean()
+    if amount <= 0:
+        raise ValidationError('Transfer amount must be greater than zero.')
+    if admin_fee >= amount:
+        raise ValidationError('Admin fee must be less than transfer amount.')
+    if from_account.company_id != company.id or to_account.company_id != company.id:
+        raise ValidationError('Transfer accounts must belong to the same company.')
+    if admin_fee_account and (admin_fee_account.company_id != company.id or not admin_fee_account.is_postable):
+        raise ValidationError('Admin fee account must belong to the same company and be postable.')
+    write_audit(company, user, AuditLog.CREATE, transaction_obj, transaction_obj.number)
+    return transaction_obj
+
+
+@transaction.atomic
+def update_cashbank_transaction(transaction_obj, transaction_date, memo='', cash_account=None, line_specs=None, counterparty='', user=None):
+    transaction_obj = CashBankTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
+    ensure_module_active(transaction_obj.company)
+    if transaction_obj.status != CashBankTransaction.DRAFT:
+        raise ValidationError('Only draft cash/bank transactions can be edited.')
+    if transaction_obj.transaction_type == CashBankTransaction.TRANSFER:
+        raise ValidationError('Use transfer update service for transfer transactions.')
+    lines = _validate_line_specs(transaction_obj.company, line_specs or [])
+    total = sum((line['amount'] for line in lines), Decimal('0'))
+    transaction_obj.date = transaction_date
+    transaction_obj.cash_account = cash_account
+    transaction_obj.counterparty = counterparty
+    transaction_obj.memo = memo
+    transaction_obj.amount = total
+    transaction_obj.full_clean()
+    transaction_obj.save(update_fields=['date', 'cash_account', 'counterparty', 'memo', 'amount', 'updated_at'])
+    transaction_obj.lines.all().delete()
+    for line in lines:
+        CashBankTransactionLine.objects.create(
+            transaction=transaction_obj,
+            account=line['account'],
+            description=line['description'],
+            amount=line['amount'],
+        ).full_clean()
+    write_audit(transaction_obj.company, user, AuditLog.UPDATE, transaction_obj, transaction_obj.number)
+    return transaction_obj
+
+
+@transaction.atomic
+def update_transfer_transaction(transaction_obj, transaction_date, from_account, to_account, amount, memo='', admin_fee=Decimal('0'), admin_fee_account=None, user=None):
+    transaction_obj = CashBankTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
+    ensure_module_active(transaction_obj.company)
+    if transaction_obj.status != CashBankTransaction.DRAFT:
+        raise ValidationError('Only draft cash/bank transactions can be edited.')
+    if transaction_obj.transaction_type != CashBankTransaction.TRANSFER:
+        raise ValidationError('Transaction is not a transfer.')
+    amount = Decimal(amount or 0)
+    admin_fee = Decimal(admin_fee or 0)
+    transaction_obj.date = transaction_date
+    transaction_obj.from_account = from_account
+    transaction_obj.to_account = to_account
+    transaction_obj.memo = memo
+    transaction_obj.amount = amount
+    transaction_obj.admin_fee = admin_fee
+    transaction_obj.admin_fee_account = admin_fee_account
+    transaction_obj.full_clean()
+    if amount <= 0:
+        raise ValidationError('Transfer amount must be greater than zero.')
+    if admin_fee >= amount:
+        raise ValidationError('Admin fee must be less than transfer amount.')
+    transaction_obj.save(update_fields=['date', 'from_account', 'to_account', 'memo', 'amount', 'admin_fee', 'admin_fee_account', 'updated_at'])
+    write_audit(transaction_obj.company, user, AuditLog.UPDATE, transaction_obj, transaction_obj.number)
+    return transaction_obj
+
+
+def _journal_lines_for_transaction(transaction_obj):
+    if transaction_obj.transaction_type == CashBankTransaction.INCOMING:
+        return [
+            {'account': transaction_obj.cash_account.account, 'description': transaction_obj.memo, 'debit': transaction_obj.amount, 'credit': '0'},
+            *[
+                {'account': line.account, 'description': line.description, 'debit': '0', 'credit': line.amount}
+                for line in transaction_obj.lines.select_related('account')
+            ],
+        ]
+    if transaction_obj.transaction_type == CashBankTransaction.OUTGOING:
+        return [
+            *[
+                {'account': line.account, 'description': line.description, 'debit': line.amount, 'credit': '0'}
+                for line in transaction_obj.lines.select_related('account')
+            ],
+            {'account': transaction_obj.cash_account.account, 'description': transaction_obj.memo, 'debit': '0', 'credit': transaction_obj.amount},
+        ]
+
+    destination_amount = transaction_obj.amount - transaction_obj.admin_fee
+    lines = [
+        {'account': transaction_obj.to_account.account, 'description': transaction_obj.memo, 'debit': destination_amount, 'credit': '0'},
+    ]
+    if transaction_obj.admin_fee:
+        lines.append({'account': transaction_obj.admin_fee_account, 'description': 'Biaya admin transfer', 'debit': transaction_obj.admin_fee, 'credit': '0'})
+    lines.append({'account': transaction_obj.from_account.account, 'description': transaction_obj.memo, 'debit': '0', 'credit': transaction_obj.amount})
+    return lines
+
+
+@transaction.atomic
+def post_cashbank_transaction(transaction_obj, user=None):
+    transaction_obj = CashBankTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
+    ensure_module_active(transaction_obj.company)
+    if transaction_obj.status != CashBankTransaction.DRAFT:
+        raise ValidationError('Only draft cash/bank transactions can be posted.')
+    transaction_obj.full_clean()
+    if transaction_obj.transaction_type in [CashBankTransaction.INCOMING, CashBankTransaction.OUTGOING]:
+        if not transaction_obj.lines.exists():
+            raise ValidationError('Transaction must have at least one line.')
+    journal = create_draft_journal(
+        transaction_obj.company,
+        transaction_obj.date,
+        transaction_obj.memo or transaction_obj.number,
+        _journal_lines_for_transaction(transaction_obj),
+        user=user,
+        source_module='cash_bank',
+        source_type=transaction_obj.transaction_type,
+        source_id=transaction_obj.number,
+    )
+    journal = post_journal(journal, user=user)
+    transaction_obj.journal_entry = journal
+    transaction_obj.status = CashBankTransaction.POSTED
+    transaction_obj.posted_by = user if getattr(user, 'is_authenticated', False) else None
+    transaction_obj.posted_at = timezone.now()
+    transaction_obj.save(update_fields=['journal_entry', 'status', 'posted_by', 'posted_at', 'updated_at'])
+    write_audit(transaction_obj.company, user, AuditLog.POST, transaction_obj, transaction_obj.number)
+    return transaction_obj
+
+
+@transaction.atomic
+def reverse_cashbank_transaction(transaction_obj, user=None, reversal_date=None):
+    transaction_obj = CashBankTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
+    ensure_module_active(transaction_obj.company)
+    if transaction_obj.status != CashBankTransaction.POSTED:
+        raise ValidationError('Only posted cash/bank transactions can be reversed.')
+    if not transaction_obj.journal_entry_id:
+        raise ValidationError('Posted transaction has no journal entry.')
+    reversal = reverse_journal(
+        transaction_obj.journal_entry,
+        user=user,
+        reversal_date=reversal_date or timezone.localdate(),
+        memo=f'Reversal {transaction_obj.number}',
+    )
+    transaction_obj.status = CashBankTransaction.REVERSED
+    transaction_obj.save(update_fields=['status', 'updated_at'])
+    write_audit(transaction_obj.company, user, AuditLog.REVERSE, transaction_obj, f'{transaction_obj.number} -> {reversal.number}')
+    return reversal
+
+
+@transaction.atomic
+def delete_cashbank_transaction(transaction_obj, user=None):
+    transaction_obj = CashBankTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
+    ensure_module_active(transaction_obj.company)
+    if transaction_obj.status != CashBankTransaction.DRAFT:
+        raise ValidationError('Only draft cash/bank transactions can be deleted.')
+    number = transaction_obj.number
+    company = transaction_obj.company
+    write_audit(company, user, AuditLog.DELETE, transaction_obj, number)
+    transaction_obj.delete()
+    return number
+
+
+def _cashbank_transaction_delta(transaction_obj, cashbank_account):
+    if transaction_obj.transaction_type == CashBankTransaction.INCOMING and transaction_obj.cash_account_id == cashbank_account.id:
+        return transaction_obj.amount, Decimal('0')
+    if transaction_obj.transaction_type == CashBankTransaction.OUTGOING and transaction_obj.cash_account_id == cashbank_account.id:
+        return Decimal('0'), transaction_obj.amount
+    if transaction_obj.transaction_type == CashBankTransaction.TRANSFER:
+        if transaction_obj.to_account_id == cashbank_account.id:
+            return transaction_obj.amount - transaction_obj.admin_fee, Decimal('0')
+        if transaction_obj.from_account_id == cashbank_account.id:
+            return Decimal('0'), transaction_obj.amount
+    return Decimal('0'), Decimal('0')
+
+
+def cashbank_book(company, cashbank_account, start_date=None, end_date=None):
+    ensure_module_active(company)
+    base_qs = CashBankTransaction.objects.filter(
+        company=company,
+        status__in=[CashBankTransaction.POSTED, CashBankTransaction.REVERSED],
+    ).select_related('journal_entry', 'cash_account', 'from_account', 'to_account')
+    related_qs = base_qs.filter(
+        models.Q(cash_account=cashbank_account)
+        | models.Q(from_account=cashbank_account)
+        | models.Q(to_account=cashbank_account)
+    )
+
+    opening = Decimal('0')
+    if start_date:
+        for transaction_obj in related_qs.filter(date__lt=start_date).order_by('date', 'number', 'id'):
+            incoming, outgoing = _cashbank_transaction_delta(transaction_obj, cashbank_account)
+            opening += incoming - outgoing
+
+    qs = related_qs.order_by('date', 'number', 'id')
+    if start_date:
+        qs = qs.filter(date__gte=start_date)
+    if end_date:
+        qs = qs.filter(date__lte=end_date)
+
+    running = opening
+    lines = []
+    total_in = Decimal('0')
+    total_out = Decimal('0')
+    for transaction_obj in qs:
+        incoming, outgoing = _cashbank_transaction_delta(transaction_obj, cashbank_account)
+        if not incoming and not outgoing:
+            continue
+        running += incoming - outgoing
+        total_in += incoming
+        total_out += outgoing
+        lines.append({
+            'date': transaction_obj.date,
+            'journal': transaction_obj.journal_entry,
+            'transaction': transaction_obj,
+            'description': transaction_obj.memo,
+            'incoming': incoming,
+            'outgoing': outgoing,
+            'balance': running,
+        })
+    return {
+        'cashbank_account': cashbank_account,
+        'opening_balance': opening,
+        'lines': lines,
+        'total_in': total_in,
+        'total_out': total_out,
+        'closing_balance': running,
+    }

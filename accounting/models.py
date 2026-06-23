@@ -33,6 +33,7 @@ class Account(models.Model):
     normal_balance = models.CharField(max_length=10, choices=BALANCES)
     parent = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='children')
     is_cash_equivalent = models.BooleanField(default=False)
+    is_postable = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -162,7 +163,27 @@ class JournalLine(models.Model):
             raise ValidationError('A journal line must have debit or credit.')
         if self.account_id and self.entry_id and self.account.company_id != self.entry.company_id:
             raise ValidationError('Account must belong to the same company as the journal.')
+        if self.account_id and not self.account.is_postable:
+            raise ValidationError('Account is not postable.')
 
+class FiscalYearClosing(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='fiscal_year_closings')
+    fiscal_year = models.PositiveIntegerField()
+    start_date = models.DateField()
+    end_date = models.DateField()
+    closing_entry = models.ForeignKey(JournalEntry, on_delete=models.PROTECT, related_name='fiscal_year_closings')
+    closed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    closed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'fiscal_year'], name='unique_fiscal_year_closing_per_company')
+        ]
+        ordering = ['-fiscal_year']
+
+    def __str__(self):
+        return f'{self.company} FY {self.fiscal_year}'
 
 class FinancialReportTemplate(models.Model):
     INCOME_STATEMENT = 'income_statement'

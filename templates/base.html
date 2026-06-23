@@ -18,11 +18,22 @@
                         <a href="{% url 'accounting:journal_list' %}">Jurnal</a>
                         <a href="{% url 'accounting:period_list' %}">Periode</a>
                         <a href="{% url 'accounting:module_list' %}">Modul</a>
+                        {% if cash_bank_active %}
+                        <div x-data="{open:false}" class="relative">
+                            <button type="button" @click="open=!open">Kas/Bank</button>
+                            <div x-show="open" @click.outside="open=false" class="absolute right-0 z-10 mt-2 w-52 rounded border bg-white p-2 shadow">
+                                <a class="block px-2 py-1" href="{% url 'cashbank:transaction_list' %}">Transaksi Kas/Bank</a>
+                                <a class="block px-2 py-1" href="{% url 'cashbank:account_list' %}">Rekening Kas/Bank</a>
+                                <a class="block px-2 py-1" href="{% url 'cashbank:report_cashbank_book' %}">Buku Kas/Bank</a>
+                            </div>
+                        </div>
+                        {% endif %}
                         <div x-data="{open:false}" class="relative">
                             <button type="button" @click="open=!open">Laporan</button>
                             <div x-show="open" @click.outside="open=false" class="absolute right-0 z-10 mt-2 w-48 rounded border bg-white p-2 shadow">
                                 <a class="block px-2 py-1" href="{% url 'accounting:report_general_ledger' %}">Buku Besar</a>
                                 <a class="block px-2 py-1" href="{% url 'accounting:report_trial_balance' %}">Neraca Percobaan</a>
+                                <a class="block px-2 py-1" href="{% url 'accounting:report_six_column_trial_balance' %}">Neraca Saldo 6 Kolom</a>
                                 <a class="block px-2 py-1" href="{% url 'accounting:report_income_statement' %}">Laba Rugi</a>
                                 <a class="block px-2 py-1" href="{% url 'accounting:report_balance_sheet' %}">Neraca</a>
                                 <a class="block px-2 py-1" href="{% url 'accounting:report_cash_flow' %}">Arus Kas</a>

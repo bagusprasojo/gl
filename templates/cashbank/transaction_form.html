@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">{{ page_title }}</h1>
+<form method="post" class="rounded border bg-white p-4 text-sm" x-data="{ lines: {{ initial_lines|safe }} }">
+    {% csrf_token %}
+    <div class="grid gap-3 md:grid-cols-3">
+        <div><label class="block">Tanggal</label><input class="w-full rounded border px-2 py-1" type="date" name="date" value="{{ form.date.value|date:'Y-m-d'|default:form.date.value }}"></div>
+        <div><label class="block">Rekening Kas/Bank</label>{{ form.cash_account }}</div>
+        <div><label class="block">Pihak Terkait</label><input class="w-full rounded border px-2 py-1" type="text" name="counterparty" value="{{ form.counterparty.value|default:'' }}"></div>
+    </div>
+    <div class="mt-3"><label class="block">Memo</label><textarea class="w-full rounded border px-2 py-1" name="memo" rows="3">{{ form.memo.value|default:'' }}</textarea></div>
+    <div class="mt-4 overflow-x-auto">
+        <table class="w-full min-w-[760px] text-sm">
+            <thead class="bg-slate-100 text-left"><tr><th class="p-2">Akun Lawan</th><th class="p-2">Keterangan</th><th class="p-2 text-right">Nilai</th><th class="p-2"></th></tr></thead>
+            <tbody>
+                <template x-for="(line, index) in lines" :key="index">
+                    <tr class="border-t">
+                        <td class="p-2"><select class="w-full rounded border px-2 py-1" name="account" x-model="line.account"><option value="">Pilih akun</option>{% for account in accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name }}</option>{% endfor %}</select></td>
+                        <td class="p-2"><input class="w-full rounded border px-2 py-1" name="description" x-model="line.description"></td>
+                        <td class="p-2"><input class="w-full rounded border px-2 py-1 text-right" name="amount" type="number" step="0.01" x-model="line.amount"></td>
+                        <td class="p-2 text-right"><button type="button" class="text-red-700" @click="lines.splice(index, 1)" x-show="lines.length > 1">Hapus</button></td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+    <button type="button" class="mt-3 rounded border bg-white px-3 py-2" @click="lines.push({account:'', description:'', amount:''})">Tambah Baris</button>
+    <div class="mt-5 flex gap-2"><button class="rounded bg-slate-900 px-4 py-2 text-white">{{ submit_label }}</button><a class="rounded border bg-white px-4 py-2" href="{% url 'cashbank:transaction_list' %}">Batal</a></div>
+</form>
+{% endblock %}
