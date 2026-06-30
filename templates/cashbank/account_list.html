@@ -8,7 +8,7 @@
 <div class="overflow-hidden rounded border bg-white">
     <table class="w-full text-sm">
         <thead class="bg-slate-100 text-left">
-            <tr><th class="p-2">Nama</th><th class="p-2">Jenis</th><th class="p-2">Bank/E-Wallet</th><th class="p-2">Nomor</th><th class="p-2">Pemilik</th><th class="p-2">Akun COA</th><th class="p-2">Status</th></tr>
+            <tr><th class="p-2">Nama</th><th class="p-2">Jenis</th><th class="p-2">Bank/E-Wallet</th><th class="p-2">Nomor</th><th class="p-2">Pemilik</th><th class="p-2">Akun COA</th><th class="p-2">Status</th><th class="p-2 text-right">Aksi</th></tr>
         </thead>
         <tbody>
             {% for account in accounts %}
@@ -20,9 +20,19 @@
                     <td class="p-2">{{ account.account_holder|default:"-" }}</td>
                     <td class="p-2">{{ account.account.code }} - {{ account.account.name }}</td>
                     <td class="p-2">{{ account.is_active|yesno:"Aktif,Nonaktif" }}</td>
+                    <td class="p-2">
+                        <div class="flex justify-end gap-2">
+                            <a class="text-blue-700" href="{% url 'cashbank:account_detail' account.uuid %}">Detail</a>
+                            <a class="text-blue-700" href="{% url 'cashbank:account_edit' account.uuid %}">Edit</a>
+                            <form method="post" action="{% url 'cashbank:account_delete' account.uuid %}" onsubmit="return confirm('Hapus rekening {{ account.name }}?')">
+                                {% csrf_token %}
+                                <button class="text-red-700" type="submit">Delete</button>
+                            </form>
+                        </div>
+                    </td>
                 </tr>
             {% empty %}
-                <tr><td class="p-3 text-slate-600" colspan="7">Belum ada rekening kas/bank.</td></tr>
+                <tr><td class="p-3 text-slate-600" colspan="8">Belum ada rekening kas/bank.</td></tr>
             {% endfor %}
         </tbody>
     </table>

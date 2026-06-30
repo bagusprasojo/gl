@@ -241,14 +241,14 @@ def next_journal_number(company, entry_date):
 
 
 @transaction.atomic
-def create_draft_journal(company, entry_date, memo, lines, user=None, source_module='core', source_type='journal', source_id=''):
+def create_draft_journal(company, entry_date, memo, lines, user=None, source_module='core', source_type='journal', source_id='', number=None):
     period = get_period_for_date(company, entry_date)
     if period.status == AccountingPeriod.CLOSED:
         raise ValidationError('Cannot create journal in a closed period.')
     entry = JournalEntry.objects.create(
         company=company,
         period=period,
-        number=next_journal_number(company, entry_date),
+        number=number or next_journal_number(company, entry_date),
         date=entry_date,
         memo=memo,
         created_by=user if getattr(user, 'is_authenticated', False) else None,
@@ -345,10 +345,12 @@ def post_journal(entry, user=None):
 
 
 @transaction.atomic
-def reverse_journal(entry, user=None, reversal_date=None, memo=''):
+def reverse_journal(entry, user=None, reversal_date=None, memo='', allow_source_reversal=False):
     entry = JournalEntry.objects.select_for_update().get(pk=entry.pk)
     if entry.status != JournalEntry.POSTED:
         raise ValidationError('Only posted journals can be reversed.')
+    if entry.source_module == 'cash_bank' and not allow_source_reversal:
+        raise ValidationError('Jurnal dari modul Kas/Bank harus direversal dari transaksi Kas/Bank.')
     reversal_date = reversal_date or timezone.localdate()
     lines = [
         {
@@ -368,6 +370,7 @@ def reverse_journal(entry, user=None, reversal_date=None, memo=''):
         source_module='core',
         source_type='reversal',
         source_id=entry.number,
+        number=f'{entry.number}-R' if entry.source_module == 'cash_bank' else None,
     )
     reversal.reversed_entry = entry
     reversal.save(update_fields=['reversed_entry'])

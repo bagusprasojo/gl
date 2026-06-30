@@ -16,11 +16,13 @@ from cashbank.services import (
     create_cashbank_account,
     create_cashbank_transaction,
     create_transfer_transaction,
+    delete_cashbank_account,
     delete_cashbank_transaction,
     ensure_module_active,
     is_module_active,
     post_cashbank_transaction,
     reverse_cashbank_transaction,
+    update_cashbank_account,
     update_cashbank_transaction,
     update_transfer_transaction,
 )
@@ -86,9 +88,93 @@ def account_create(request):
                 messages.error(request, exc.messages[0])
     else:
         form = CashBankAccountForm(company)
-    return render(request, 'cashbank/account_form.html', {'form': form})
+    return render(request, 'cashbank/account_form.html', {'form': form, 'page_title': 'Rekening Kas/Bank Baru', 'submit_label': 'Simpan'})
 
 
+@login_required
+def account_detail(request, uuid):
+    company = _company(request)
+    try:
+        _guard_module(request)
+    except ValidationError as exc:
+        return _handle_module_error(request, exc)
+    account = get_object_or_404(CashBankAccount.objects.select_related('account'), uuid=uuid, company=company)
+    transaction_count = CashBankTransaction.objects.filter(
+        cash_account=account
+    ).count() + CashBankTransaction.objects.filter(
+        from_account=account
+    ).count() + CashBankTransaction.objects.filter(
+        to_account=account
+    ).count()
+    return render(request, 'cashbank/account_detail.html', {'account': account, 'transaction_count': transaction_count})
+
+
+@login_required
+def account_edit(request, uuid):
+    company = _company(request)
+    try:
+        _guard_module(request)
+    except ValidationError as exc:
+        return _handle_module_error(request, exc)
+    account = get_object_or_404(CashBankAccount, uuid=uuid, company=company)
+    if request.method == 'POST':
+        form = CashBankAccountForm(company, request.POST)
+        if form.is_valid():
+            try:
+                update_cashbank_account(
+                    account,
+                    form.cleaned_data['name'],
+                    form.cleaned_data['account'],
+                    account_kind=form.cleaned_data['account_kind'],
+                    bank_name=form.cleaned_data['bank_name'],
+                    account_number=form.cleaned_data['account_number'],
+                    account_holder=form.cleaned_data['account_holder'],
+                    notes=form.cleaned_data['notes'],
+                    is_active=request.POST.get('is_active') == 'on',
+                    user=request.user,
+                )
+                messages.success(request, f'Rekening {account.name} diperbarui.')
+                return redirect('cashbank:account_detail', uuid=account.uuid)
+            except ValidationError as exc:
+                messages.error(request, exc.messages[0])
+    else:
+        form = CashBankAccountForm(company, initial={
+            'name': account.name,
+            'account_kind': account.account_kind,
+            'bank_name': account.bank_name,
+            'account_number': account.account_number,
+            'account_holder': account.account_holder,
+            'account': account.account,
+            'notes': account.notes,
+        })
+    return render(
+        request,
+        'cashbank/account_form.html',
+        {
+            'form': form,
+            'account': account,
+            'page_title': f'Edit {account.name}',
+            'submit_label': 'Simpan Perubahan',
+        },
+    )
+
+
+@login_required
+def account_delete(request, uuid):
+    company = _company(request)
+    try:
+        _guard_module(request)
+    except ValidationError as exc:
+        return _handle_module_error(request, exc)
+    account = get_object_or_404(CashBankAccount, uuid=uuid, company=company)
+    if request.method == 'POST':
+        try:
+            name = delete_cashbank_account(account, user=request.user)
+            messages.success(request, f'Rekening {name} dihapus.')
+            return redirect('cashbank:account_list')
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0])
+    return redirect('cashbank:account_detail', uuid=account.uuid)
 @login_required
 def transaction_list(request):
     try:
@@ -192,6 +278,7 @@ def transfer_create(request):
                     form.cleaned_data['amount'],
                     memo=form.cleaned_data['memo'],
                     admin_fee=form.cleaned_data['admin_fee'] or 0,
+                    admin_fee_borne_by=form.cleaned_data['admin_fee_borne_by'],
                     admin_fee_account=form.cleaned_data['admin_fee_account'],
                     user=request.user,
                 )
@@ -228,7 +315,8 @@ def transaction_edit(request, uuid):
                         form.cleaned_data['amount'],
                         memo=form.cleaned_data['memo'],
                         admin_fee=form.cleaned_data['admin_fee'] or 0,
-                        admin_fee_account=form.cleaned_data['admin_fee_account'],
+                    admin_fee_borne_by=form.cleaned_data['admin_fee_borne_by'],
+                    admin_fee_account=form.cleaned_data['admin_fee_account'],
                         user=request.user,
                     )
                     messages.success(request, f'Transfer {transaction_obj.number} diperbarui.')
@@ -242,6 +330,7 @@ def transaction_edit(request, uuid):
                 'to_account': transaction_obj.to_account,
                 'amount': transaction_obj.amount,
                 'admin_fee': transaction_obj.admin_fee,
+                'admin_fee_borne_by': transaction_obj.admin_fee_borne_by,
                 'admin_fee_account': transaction_obj.admin_fee_account,
                 'memo': transaction_obj.memo,
             })

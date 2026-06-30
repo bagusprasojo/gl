@@ -13,7 +13,7 @@
             <form method="post" action="{% url 'accounting:journal_post' entry.uuid %}">{% csrf_token %}<button class="rounded bg-slate-900 px-4 py-2 text-sm text-white">Posting</button></form>
             <form method="post" action="{% url 'accounting:journal_delete' entry.uuid %}" onsubmit="return confirm('Hapus jurnal {{ entry.number }}?')">{% csrf_token %}<button class="rounded border border-red-200 bg-white px-4 py-2 text-sm text-red-700">Hapus</button></form>
         {% endif %}
-        {% if entry.status == 'posted' %}
+        {% if entry.status == 'posted' and entry.source_module != 'cash_bank' %}
             <form method="post" action="{% url 'accounting:journal_reverse' entry.uuid %}">{% csrf_token %}<button class="rounded border bg-white px-4 py-2 text-sm">Reversal</button></form>
         {% endif %}
     </div>

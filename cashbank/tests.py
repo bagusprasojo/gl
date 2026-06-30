@@ -5,6 +5,7 @@ from django.test import Client, TestCase
 
 from accounts.models import User
 from accounting.models import Account, JournalEntry
+from accounting.services import reverse_journal
 from cashbank.models import CashBankAccount, CashBankTransaction
 from cashbank.services import (
     cashbank_book,
@@ -71,6 +72,76 @@ class CashBankAddonTests(TestCase):
                 account_number='1234567890',
                 user=self.user,
             )
+    def test_cashbank_account_list_shows_action_links(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.get('/cashbank/accounts/')
+
+        self.assertContains(response, f'/cashbank/accounts/{cash_account.uuid}/')
+        self.assertContains(response, f'/cashbank/accounts/{cash_account.uuid}/edit/')
+        self.assertContains(response, f'/cashbank/accounts/{cash_account.uuid}/delete/')
+        self.assertContains(response, 'Detail')
+        self.assertContains(response, 'Edit')
+        self.assertContains(response, 'Delete')
+
+    def test_cashbank_account_can_be_edited_from_view(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.post(f'/cashbank/accounts/{cash_account.uuid}/edit/', {
+            'name': 'Bank Operasional Utama',
+            'account_kind': CashBankAccount.BANK,
+            'bank_name': 'Bank BCA',
+            'account_number': '1234567890',
+            'account_holder': 'Cashbank UMKM',
+            'account': self.bank.pk,
+            'notes': 'Rekening utama',
+            'is_active': 'on',
+        })
+
+        self.assertRedirects(response, f'/cashbank/accounts/{cash_account.uuid}/')
+        cash_account.refresh_from_db()
+        self.assertEqual(cash_account.name, 'Bank Operasional Utama')
+        self.assertEqual(cash_account.bank_name, 'Bank BCA')
+        self.assertEqual(cash_account.account_number, '1234567890')
+        self.assertTrue(cash_account.is_active)
+
+    def test_unused_cashbank_account_can_be_deleted_from_view(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.post(f'/cashbank/accounts/{cash_account.uuid}/delete/')
+
+        self.assertRedirects(response, '/cashbank/accounts/')
+        self.assertFalse(CashBankAccount.objects.filter(pk=cash_account.pk).exists())
+
+    def test_used_cashbank_account_delete_is_blocked(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        create_cashbank_transaction(
+            self.company,
+            CashBankTransaction.INCOMING,
+            date(2026, 6, 15),
+            memo='Penerimaan penjualan',
+            cash_account=cash_account,
+            line_specs=[{'account': self.revenue, 'description': 'Penjualan tunai', 'amount': '1500000'}],
+            user=self.user,
+        )
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.post(f'/cashbank/accounts/{cash_account.uuid}/delete/', follow=True)
+
+        self.assertRedirects(response, f'/cashbank/accounts/{cash_account.uuid}/')
+        self.assertContains(response, 'Rekening kas/bank sudah dipakai transaksi dan tidak bisa dihapus.')
+        self.assertTrue(CashBankAccount.objects.filter(pk=cash_account.pk).exists())
     def test_cashbank_service_rejects_when_module_inactive(self):
         with self.assertRaisesMessage(ValidationError, 'Modul Kas/Bank belum aktif.'):
             create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
@@ -107,6 +178,94 @@ class CashBankAddonTests(TestCase):
         self.assertEqual(bank_line.debit, 1500000)
         self.assertEqual(revenue_line.credit, 1500000)
 
+    def test_transfer_form_rejects_same_source_and_destination(self):
+        self.activate_module()
+        bank_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.post('/cashbank/transactions/transfer/new/', {
+            'date': '2026-06-16',
+            'from_account': bank_account.pk,
+            'to_account': bank_account.pk,
+            'amount': '1000000',
+            'admin_fee': '0',
+            'memo': 'Transfer rekening sama',
+        })
+
+        self.assertContains(response, 'Rekening asal dan tujuan harus berbeda.')
+        self.assertFalse(CashBankTransaction.objects.filter(transaction_type=CashBankTransaction.TRANSFER).exists())
+
+    def test_transfer_form_requires_admin_fee_account_when_fee_is_filled(self):
+        self.activate_module()
+        bank_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        cash_account = create_cashbank_account(self.company, 'Kas Kecil', self.cash, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.post('/cashbank/transactions/transfer/new/', {
+            'date': '2026-06-16',
+            'from_account': bank_account.pk,
+            'to_account': cash_account.pk,
+            'amount': '1000000',
+            'admin_fee': '5000',
+            'memo': 'Transfer tanpa akun biaya',
+        })
+
+        self.assertContains(response, 'Akun biaya admin wajib dipilih jika biaya admin diisi.')
+        self.assertFalse(CashBankTransaction.objects.filter(transaction_type=CashBankTransaction.TRANSFER).exists())
+
+    def test_transfer_form_admin_fee_account_only_lists_expense_accounts(self):
+        self.activate_module()
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.get('/cashbank/transactions/transfer/new/')
+
+        self.assertContains(response, self.expense.name)
+        self.assertNotContains(response, '1120 - Bank')
+        self.assertNotContains(response, '3100 - Modal Pemilik')
+    def test_cashbank_journal_cannot_be_reversed_from_core_accounting(self):
+        self.activate_module()
+        cash_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        transaction = create_cashbank_transaction(
+            self.company,
+            CashBankTransaction.INCOMING,
+            date(2026, 6, 15),
+            memo='Penerimaan penjualan',
+            cash_account=cash_account,
+            line_specs=[{'account': self.revenue, 'description': 'Penjualan tunai', 'amount': '1500000'}],
+            user=self.user,
+        )
+        posted = post_cashbank_transaction(transaction, user=self.user)
+
+        with self.assertRaisesMessage(ValidationError, 'Jurnal dari modul Kas/Bank harus direversal dari transaksi Kas/Bank.'):
+            reverse_journal(posted.journal_entry, user=self.user)
+
+    def test_transfer_admin_fee_borne_by_source_posts_source_credit_for_amount_plus_fee(self):
+        self.activate_module()
+        bank_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
+        cash_account = create_cashbank_account(self.company, 'Kas Kecil', self.cash, user=self.user)
+        transaction = create_transfer_transaction(
+            self.company,
+            date(2026, 6, 16),
+            from_account=bank_account,
+            to_account=cash_account,
+            amount='1000000',
+            admin_fee='5000',
+            admin_fee_borne_by=CashBankTransaction.ADMIN_FEE_SOURCE,
+            admin_fee_account=self.expense,
+            memo='Tarik tunai',
+            user=self.user,
+        )
+
+        posted = post_cashbank_transaction(transaction, user=self.user)
+
+        lines = {line.account.code: line for line in posted.journal_entry.lines.select_related('account')}
+        self.assertEqual(posted.journal_entry.number, posted.number)
+        self.assertEqual(lines['1110'].debit, 1000000)
+        self.assertEqual(lines['6100'].debit, 5000)
+        self.assertEqual(lines['1120'].credit, 1005000)
     def test_transfer_with_admin_fee_posts_single_journal(self):
         self.activate_module()
         bank_account = create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)

@@ -64,6 +64,8 @@ class CashBankTransaction(models.Model):
     DRAFT = 'draft'
     POSTED = 'posted'
     REVERSED = 'reversed'
+    ADMIN_FEE_SOURCE = 'source'
+    ADMIN_FEE_DESTINATION = 'destination'
 
     TRANSACTION_TYPES = [
         (INCOMING, 'Kas/Bank Masuk'),
@@ -74,6 +76,10 @@ class CashBankTransaction(models.Model):
         (DRAFT, 'Draft'),
         (POSTED, 'Posted'),
         (REVERSED, 'Reversed'),
+    ]
+    ADMIN_FEE_BORNE_BY_CHOICES = [
+        (ADMIN_FEE_SOURCE, 'Rekening sumber'),
+        (ADMIN_FEE_DESTINATION, 'Rekening tujuan'),
     ]
 
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
@@ -89,6 +95,7 @@ class CashBankTransaction(models.Model):
     memo = models.TextField(blank=True)
     amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'))
     admin_fee = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'))
+    admin_fee_borne_by = models.CharField(max_length=20, choices=ADMIN_FEE_BORNE_BY_CHOICES, default=ADMIN_FEE_DESTINATION)
     admin_fee_account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, related_name='cashbank_admin_fee_transactions')
     journal_entry = models.ForeignKey(JournalEntry, on_delete=models.PROTECT, null=True, blank=True, related_name='cashbank_transactions')
     reversed_transaction = models.ForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='reversal_transactions')
@@ -97,7 +104,6 @@ class CashBankTransaction(models.Model):
     posted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['company', 'number'], name='unique_cashbank_transaction_number_per_company')

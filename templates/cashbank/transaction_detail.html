@@ -21,7 +21,7 @@
     <div><span class="text-slate-500">Rekening:</span> {% if transaction.transaction_type == 'transfer' %}{{ transaction.from_account.name }} -> {{ transaction.to_account.name }}{% else %}{{ transaction.cash_account.name }}{% endif %}</div>
     <div><span class="text-slate-500">Jurnal:</span> {% if transaction.journal_entry %}<a class="text-blue-700" href="{% url 'accounting:journal_detail' transaction.journal_entry.uuid %}">{{ transaction.journal_entry.number }}</a>{% else %}-{% endif %}</div>
     {% if transaction.counterparty %}<div><span class="text-slate-500">Pihak Terkait:</span> {{ transaction.counterparty }}</div>{% endif %}
-    {% if transaction.admin_fee %}<div><span class="text-slate-500">Biaya Admin:</span> {{ transaction.admin_fee|thousand_id }}{% if transaction.admin_fee_account %} - {{ transaction.admin_fee_account }}{% endif %}</div>{% endif %}
+    {% if transaction.admin_fee %}<div><span class="text-slate-500">Biaya Admin:</span> {{ transaction.admin_fee|thousand_id }} - {{ transaction.get_admin_fee_borne_by_display }}{% if transaction.admin_fee_account %} - {{ transaction.admin_fee_account }}{% endif %}</div>{% endif %}
     <div class="md:col-span-2"><span class="text-slate-500">Memo:</span> {{ transaction.memo|default:'-' }}</div>
 </div>
 {% if transaction.transaction_type != 'transfer' %}

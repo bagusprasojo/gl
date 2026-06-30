@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ account.name }}{% endblock %}
+{% block content %}
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div>
+        <h1 class="text-xl font-semibold">{{ account.name }}</h1>
+        <p class="text-sm text-slate-600">{{ account.get_account_kind_display }} - {{ account.is_active|yesno:"Aktif,Nonaktif" }}</p>
+    </div>
+    <div class="flex gap-2 text-sm">
+        <a class="rounded border bg-white px-4 py-2" href="{% url 'cashbank:account_list' %}">Daftar</a>
+        <a class="rounded border bg-white px-4 py-2" href="{% url 'cashbank:account_edit' account.uuid %}">Edit</a>
+        <form method="post" action="{% url 'cashbank:account_delete' account.uuid %}" onsubmit="return confirm('Hapus rekening {{ account.name }}?')">
+            {% csrf_token %}
+            <button class="rounded border border-red-200 bg-white px-4 py-2 text-red-700">Delete</button>
+        </form>
+    </div>
+</div>
+<div class="grid gap-3 rounded border bg-white p-4 text-sm md:grid-cols-2">
+    <div><span class="text-slate-500">Jenis:</span> {{ account.get_account_kind_display }}</div>
+    <div><span class="text-slate-500">Status:</span> {{ account.is_active|yesno:"Aktif,Nonaktif" }}</div>
+    <div><span class="text-slate-500">Bank/E-Wallet:</span> {{ account.bank_name|default:"-" }}</div>
+    <div><span class="text-slate-500">Nomor Rekening:</span> {{ account.account_number|default:"-" }}</div>
+    <div><span class="text-slate-500">Pemilik Rekening:</span> {{ account.account_holder|default:"-" }}</div>
+    <div><span class="text-slate-500">Jumlah Transaksi:</span> {{ transaction_count }}</div>
+    <div class="md:col-span-2"><span class="text-slate-500">Akun COA:</span> {{ account.account.code }} - {{ account.account.name }}</div>
+    <div class="md:col-span-2"><span class="text-slate-500">Catatan:</span> {{ account.notes|default:"-" }}</div>
+</div>
+{% endblock %}

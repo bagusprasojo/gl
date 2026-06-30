@@ -81,6 +81,81 @@ def create_cashbank_account(
     return cash_account
 
 
+@transaction.atomic
+def update_cashbank_account(
+    cash_account,
+    name,
+    account,
+    account_kind=CashBankAccount.BANK,
+    bank_name='',
+    account_number='',
+    account_holder='',
+    notes='',
+    is_active=True,
+    user=None,
+):
+    cash_account = CashBankAccount.objects.select_for_update().get(pk=cash_account.pk)
+    ensure_module_active(cash_account.company)
+    cash_account.name = name
+    cash_account.account = account
+    cash_account.account_kind = account_kind
+    cash_account.bank_name = bank_name
+    cash_account.account_number = account_number
+    cash_account.account_holder = account_holder
+    cash_account.notes = notes
+    cash_account.is_active = is_active
+    cash_account.full_clean()
+    cash_account.save(update_fields=[
+        'name',
+        'account',
+        'account_kind',
+        'bank_name',
+        'account_number',
+        'account_holder',
+        'notes',
+        'is_active',
+        'updated_at',
+    ])
+    write_audit(cash_account.company, user, AuditLog.UPDATE, cash_account, cash_account.name)
+    return cash_account
+
+
+@transaction.atomic
+def delete_cashbank_account(cash_account, user=None):
+    cash_account = CashBankAccount.objects.select_for_update().get(pk=cash_account.pk)
+    ensure_module_active(cash_account.company)
+    is_used = CashBankTransaction.objects.filter(
+        models.Q(cash_account=cash_account)
+        | models.Q(from_account=cash_account)
+        | models.Q(to_account=cash_account)
+    ).exists()
+    if is_used:
+        raise ValidationError('Rekening kas/bank sudah dipakai transaksi dan tidak bisa dihapus.')
+    name = cash_account.name
+    company = cash_account.company
+    write_audit(company, user, AuditLog.DELETE, cash_account, name)
+    cash_account.delete()
+    return name
+
+
+def _validate_transfer_accounts(company, from_account, to_account, admin_fee_account=None):
+    if not from_account or not to_account:
+        raise ValidationError('Transfer requires source and destination accounts.')
+    if from_account.company_id != company.id or to_account.company_id != company.id:
+        raise ValidationError('Transfer accounts must belong to the same company.')
+    if not from_account.is_active or not to_account.is_active:
+        raise ValidationError('Transfer accounts must be active.')
+    if from_account_id := getattr(from_account, 'id', None):
+        if from_account_id == getattr(to_account, 'id', None):
+            raise ValidationError('Transfer source and destination must be different.')
+    if admin_fee_account:
+        if admin_fee_account.company_id != company.id:
+            raise ValidationError('Admin fee account must belong to the same company.')
+        if not admin_fee_account.is_postable or not admin_fee_account.is_active:
+            raise ValidationError('Admin fee account must be active and postable.')
+        if admin_fee_account.is_cash_equivalent or admin_fee_account.account_type != Account.EXPENSE:
+            raise ValidationError('Admin fee account must be an expense account.')
+
 def _validate_line_specs(company, line_specs):
     if not line_specs:
         raise ValidationError('Transaction must have at least one line.')
@@ -138,10 +213,18 @@ def create_cashbank_transaction(company, transaction_type, transaction_date, mem
 
 
 @transaction.atomic
-def create_transfer_transaction(company, transaction_date, from_account, to_account, amount, memo='', admin_fee=Decimal('0'), admin_fee_account=None, user=None):
+def create_transfer_transaction(company, transaction_date, from_account, to_account, amount, memo='', admin_fee=Decimal('0'), admin_fee_borne_by=CashBankTransaction.ADMIN_FEE_DESTINATION, admin_fee_account=None, user=None):
     ensure_module_active(company)
     amount = Decimal(amount or 0)
     admin_fee = Decimal(admin_fee or 0)
+    if amount <= 0:
+        raise ValidationError('Transfer amount must be greater than zero.')
+    if admin_fee >= amount:
+        raise ValidationError('Admin fee must be less than transfer amount.')
+    if admin_fee and not admin_fee_account:
+        raise ValidationError('Admin fee account is required when admin fee is filled.')
+    _validate_transfer_accounts(company, from_account, to_account, admin_fee_account)
+
     transaction_obj = CashBankTransaction.objects.create(
         company=company,
         number=next_transaction_number(company, CashBankTransaction.TRANSFER, transaction_date),
@@ -152,21 +235,13 @@ def create_transfer_transaction(company, transaction_date, from_account, to_acco
         memo=memo,
         amount=amount,
         admin_fee=admin_fee,
+        admin_fee_borne_by=admin_fee_borne_by,
         admin_fee_account=admin_fee_account,
         created_by=user if getattr(user, 'is_authenticated', False) else None,
     )
     transaction_obj.full_clean()
-    if amount <= 0:
-        raise ValidationError('Transfer amount must be greater than zero.')
-    if admin_fee >= amount:
-        raise ValidationError('Admin fee must be less than transfer amount.')
-    if from_account.company_id != company.id or to_account.company_id != company.id:
-        raise ValidationError('Transfer accounts must belong to the same company.')
-    if admin_fee_account and (admin_fee_account.company_id != company.id or not admin_fee_account.is_postable):
-        raise ValidationError('Admin fee account must belong to the same company and be postable.')
     write_audit(company, user, AuditLog.CREATE, transaction_obj, transaction_obj.number)
     return transaction_obj
-
 
 @transaction.atomic
 def update_cashbank_transaction(transaction_obj, transaction_date, memo='', cash_account=None, line_specs=None, counterparty='', user=None):
@@ -198,7 +273,7 @@ def update_cashbank_transaction(transaction_obj, transaction_date, memo='', cash
 
 
 @transaction.atomic
-def update_transfer_transaction(transaction_obj, transaction_date, from_account, to_account, amount, memo='', admin_fee=Decimal('0'), admin_fee_account=None, user=None):
+def update_transfer_transaction(transaction_obj, transaction_date, from_account, to_account, amount, memo='', admin_fee=Decimal('0'), admin_fee_borne_by=CashBankTransaction.ADMIN_FEE_DESTINATION, admin_fee_account=None, user=None):
     transaction_obj = CashBankTransaction.objects.select_for_update().get(pk=transaction_obj.pk)
     ensure_module_active(transaction_obj.company)
     if transaction_obj.status != CashBankTransaction.DRAFT:
@@ -207,22 +282,26 @@ def update_transfer_transaction(transaction_obj, transaction_date, from_account,
         raise ValidationError('Transaction is not a transfer.')
     amount = Decimal(amount or 0)
     admin_fee = Decimal(admin_fee or 0)
+    if amount <= 0:
+        raise ValidationError('Transfer amount must be greater than zero.')
+    if admin_fee >= amount:
+        raise ValidationError('Admin fee must be less than transfer amount.')
+    if admin_fee and not admin_fee_account:
+        raise ValidationError('Admin fee account is required when admin fee is filled.')
+    _validate_transfer_accounts(transaction_obj.company, from_account, to_account, admin_fee_account)
+
     transaction_obj.date = transaction_date
     transaction_obj.from_account = from_account
     transaction_obj.to_account = to_account
     transaction_obj.memo = memo
     transaction_obj.amount = amount
     transaction_obj.admin_fee = admin_fee
+    transaction_obj.admin_fee_borne_by = admin_fee_borne_by
     transaction_obj.admin_fee_account = admin_fee_account
     transaction_obj.full_clean()
-    if amount <= 0:
-        raise ValidationError('Transfer amount must be greater than zero.')
-    if admin_fee >= amount:
-        raise ValidationError('Admin fee must be less than transfer amount.')
-    transaction_obj.save(update_fields=['date', 'from_account', 'to_account', 'memo', 'amount', 'admin_fee', 'admin_fee_account', 'updated_at'])
+    transaction_obj.save(update_fields=['date', 'from_account', 'to_account', 'memo', 'amount', 'admin_fee', 'admin_fee_borne_by', 'admin_fee_account', 'updated_at'])
     write_audit(transaction_obj.company, user, AuditLog.UPDATE, transaction_obj, transaction_obj.number)
     return transaction_obj
-
 
 def _journal_lines_for_transaction(transaction_obj):
     if transaction_obj.transaction_type == CashBankTransaction.INCOMING:
@@ -242,13 +321,19 @@ def _journal_lines_for_transaction(transaction_obj):
             {'account': transaction_obj.cash_account.account, 'description': transaction_obj.memo, 'debit': '0', 'credit': transaction_obj.amount},
         ]
 
-    destination_amount = transaction_obj.amount - transaction_obj.admin_fee
+    source_credit = transaction_obj.amount
+    destination_amount = transaction_obj.amount
+    if transaction_obj.admin_fee and transaction_obj.admin_fee_borne_by == CashBankTransaction.ADMIN_FEE_SOURCE:
+        source_credit += transaction_obj.admin_fee
+    elif transaction_obj.admin_fee:
+        destination_amount -= transaction_obj.admin_fee
+
     lines = [
         {'account': transaction_obj.to_account.account, 'description': transaction_obj.memo, 'debit': destination_amount, 'credit': '0'},
     ]
     if transaction_obj.admin_fee:
         lines.append({'account': transaction_obj.admin_fee_account, 'description': 'Biaya admin transfer', 'debit': transaction_obj.admin_fee, 'credit': '0'})
-    lines.append({'account': transaction_obj.from_account.account, 'description': transaction_obj.memo, 'debit': '0', 'credit': transaction_obj.amount})
+    lines.append({'account': transaction_obj.from_account.account, 'description': transaction_obj.memo, 'debit': '0', 'credit': source_credit})
     return lines
 
 
@@ -271,6 +356,7 @@ def post_cashbank_transaction(transaction_obj, user=None):
         source_module='cash_bank',
         source_type=transaction_obj.transaction_type,
         source_id=transaction_obj.number,
+        number=transaction_obj.number,
     )
     journal = post_journal(journal, user=user)
     transaction_obj.journal_entry = journal
@@ -295,6 +381,7 @@ def reverse_cashbank_transaction(transaction_obj, user=None, reversal_date=None)
         user=user,
         reversal_date=reversal_date or timezone.localdate(),
         memo=f'Reversal {transaction_obj.number}',
+        allow_source_reversal=True,
     )
     transaction_obj.status = CashBankTransaction.REVERSED
     transaction_obj.save(update_fields=['status', 'updated_at'])
@@ -321,10 +408,12 @@ def _cashbank_transaction_delta(transaction_obj, cashbank_account):
     if transaction_obj.transaction_type == CashBankTransaction.OUTGOING and transaction_obj.cash_account_id == cashbank_account.id:
         return Decimal('0'), transaction_obj.amount
     if transaction_obj.transaction_type == CashBankTransaction.TRANSFER:
+        admin_fee_from_source = transaction_obj.admin_fee if transaction_obj.admin_fee_borne_by == CashBankTransaction.ADMIN_FEE_SOURCE else Decimal('0')
+        admin_fee_from_destination = transaction_obj.admin_fee if transaction_obj.admin_fee_borne_by == CashBankTransaction.ADMIN_FEE_DESTINATION else Decimal('0')
         if transaction_obj.to_account_id == cashbank_account.id:
-            return transaction_obj.amount - transaction_obj.admin_fee, Decimal('0')
+            return transaction_obj.amount - admin_fee_from_destination, Decimal('0')
         if transaction_obj.from_account_id == cashbank_account.id:
-            return Decimal('0'), transaction_obj.amount
+            return Decimal('0'), transaction_obj.amount + admin_fee_from_source
     return Decimal('0'), Decimal('0')
 
 
