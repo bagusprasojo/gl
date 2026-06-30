@@ -5,9 +5,15 @@ from cashbank.models import CashBankAccount, CashBankTransaction, CashBankTransa
 
 @admin.register(CashBankAccount)
 class CashBankAccountAdmin(admin.ModelAdmin):
+<<<<<<< HEAD
     list_display = ('company', 'name', 'account_kind', 'bank_name', 'account_number', 'account', 'is_active')
     list_filter = ('company', 'account_kind', 'is_active')
     search_fields = ('name', 'bank_name', 'account_number', 'account_holder', 'account__code', 'account__name')
+=======
+    list_display = ('company', 'name', 'account', 'is_active')
+    list_filter = ('company', 'is_active')
+    search_fields = ('name', 'account__code', 'account__name')
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 
 
 class CashBankTransactionLineInline(admin.TabularInline):

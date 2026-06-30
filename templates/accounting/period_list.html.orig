@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Periode{% endblock %}
 {% block content %}
+<<<<<<< HEAD
 <h1 class="mb-4 text-xl font-semibold">Periode Akuntansi</h1>
+=======
+<h1 class="mb-4 text-xl font-semibold">Periode Akuntansi</h1>
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 <div class="mb-4 rounded border bg-white p-4 text-sm">
     <div class="flex flex-wrap items-center justify-between gap-3">
         <div>

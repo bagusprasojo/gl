@@ -18,16 +18,27 @@ from accounting.models import (
     AccountPeriodBalance,
     CashFlowCategory,
     FinancialReportLine,
+<<<<<<< HEAD
     FinancialReportTemplate,
     FiscalYearClosing,
+=======
+    FinancialReportTemplate,
+    FiscalYearClosing,
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     JournalEntry,
     JournalLine,
 )
 
 
+<<<<<<< HEAD
 NON_POSTABLE_DEFAULT_CODES = {'1000', '1100', '2000', '3000', '4000', '5000', '6000'}
 
 
+=======
+NON_POSTABLE_DEFAULT_CODES = {'1000', '1100', '2000', '3000', '4000', '5000', '6000'}
+
+
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 DEFAULT_COA = [
     ('1000', 'ASET', Account.ASSET, Account.DEBIT, False),
     ('1100', 'Kas', Account.ASSET, Account.DEBIT, True),
@@ -396,7 +407,11 @@ def close_period(period, user=None):
         start_date, end_date = fiscal_year_bounds(period.company, fiscal_year)
         closing_exists = FiscalYearClosing.objects.filter(company=period.company, fiscal_year=fiscal_year).exists()
         if not closing_exists and fiscal_year_has_income_statement_balance(period.company, start_date, end_date):
+<<<<<<< HEAD
             raise ValidationError(f'Close fiscal year {fiscal_year} first.')
+=======
+            raise ValidationError(f'Close fiscal year {fiscal_year} first.')
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     rebuild_account_period_balances(period)
     period.status = AccountingPeriod.CLOSED
     period.closed_by = user if getattr(user, 'is_authenticated', False) else None
@@ -448,6 +463,126 @@ def fiscal_year_bounds(company, fiscal_year):
     end_year = fiscal_year
     end_day = calendar.monthrange(end_year, end_month)[1]
     return start_date, date(end_year, end_month, end_day)
+<<<<<<< HEAD
+=======
+
+
+def fiscal_year_for_date(company, value):
+    if company.fiscal_year_start_month == 1:
+        return value.year
+    return value.year + 1 if value.month >= company.fiscal_year_start_month else value.year
+
+
+def is_fiscal_year_end_period(period):
+    fiscal_year = fiscal_year_for_date(period.company, period.end_date)
+    _, end_date = fiscal_year_bounds(period.company, fiscal_year)
+    return period.end_date == end_date
+
+
+def fiscal_year_has_income_statement_balance(company, start_date, end_date):
+    return any(
+        row['debit'] or row['credit']
+        for row in account_balances(company, start_date=start_date, end_date=end_date)
+        if row['account'].account_type in [Account.REVENUE, Account.EXPENSE]
+    )
+
+
+def get_next_closeable_fiscal_year(company):
+    latest = FiscalYearClosing.objects.filter(company=company).order_by('-fiscal_year').first()
+    if latest:
+        return latest.fiscal_year + 1
+    first_period = AccountingPeriod.objects.filter(company=company).order_by('start_date').first()
+    if not first_period:
+        return date.today().year
+    return fiscal_year_for_date(company, first_period.end_date)
+
+
+@transaction.atomic
+def close_fiscal_year(company, fiscal_year, user=None):
+    if FiscalYearClosing.objects.filter(company=company, fiscal_year=fiscal_year).exists():
+        raise ValidationError('Fiscal year is already closed.')
+
+    start_date, end_date = fiscal_year_bounds(company, fiscal_year)
+    ensure_year_periods(company, start_date.year)
+    ensure_year_periods(company, end_date.year)
+    periods = list(
+        AccountingPeriod.objects.filter(
+            company=company,
+            start_date__gte=start_date,
+            end_date__lte=end_date,
+        ).order_by('start_date')
+    )
+    if len(periods) != 12:
+        raise ValidationError('Fiscal year must have 12 accounting periods.')
+
+    final_period = periods[-1]
+    unclosed_previous = [period for period in periods[:-1] if period.status != AccountingPeriod.CLOSED]
+    if unclosed_previous:
+        period = unclosed_previous[0]
+        raise ValidationError(f'Close monthly period {period.year}-{period.month:02d} first.')
+    if final_period.status != AccountingPeriod.OPEN:
+        raise ValidationError('Final fiscal period must be open for annual closing journal.')
+
+    drafts = JournalEntry.objects.filter(
+        company=company,
+        date__gte=start_date,
+        date__lte=end_date,
+        status=JournalEntry.DRAFT,
+    ).exists()
+    if drafts:
+        raise ValidationError('Cannot close fiscal year with draft journals.')
+
+    retained_earnings = Account.objects.filter(company=company, code='3300', is_postable=True).first()
+    if not retained_earnings:
+        raise ValidationError('Retained earnings account 3300 must exist and be postable.')
+
+    lines = []
+    retained_debit = Decimal('0')
+    retained_credit = Decimal('0')
+    for row in account_balances(company, start_date=start_date, end_date=end_date):
+        account = row['account']
+        if account.account_type not in [Account.REVENUE, Account.EXPENSE]:
+            continue
+        signed_balance = row['debit'] - row['credit']
+        if signed_balance > 0:
+            amount = signed_balance
+            lines.append({'account': account, 'description': f'Closing FY {fiscal_year}', 'debit': '0', 'credit': amount})
+            retained_debit += amount
+        elif signed_balance < 0:
+            amount = abs(signed_balance)
+            lines.append({'account': account, 'description': f'Closing FY {fiscal_year}', 'debit': amount, 'credit': '0'})
+            retained_credit += amount
+
+    net_to_retained = retained_credit - retained_debit
+    if not lines or net_to_retained == 0:
+        raise ValidationError('No income statement balance to close.')
+    if net_to_retained > 0:
+        lines.append({'account': retained_earnings, 'description': f'Closing FY {fiscal_year}', 'debit': '0', 'credit': net_to_retained})
+    else:
+        lines.append({'account': retained_earnings, 'description': f'Closing FY {fiscal_year}', 'debit': abs(net_to_retained), 'credit': '0'})
+
+    entry = create_draft_journal(
+        company,
+        end_date,
+        f'Closing tahun buku {fiscal_year}',
+        lines,
+        user=user,
+        source_module='core',
+        source_type='fiscal_year_closing',
+        source_id=str(fiscal_year),
+    )
+    entry = post_journal(entry, user=user)
+    closing = FiscalYearClosing.objects.create(
+        company=company,
+        fiscal_year=fiscal_year,
+        start_date=start_date,
+        end_date=end_date,
+        closing_entry=entry,
+        closed_by=user if getattr(user, 'is_authenticated', False) else None,
+    )
+    write_audit(company, user, AuditLog.CLOSE_FISCAL_YEAR, closing, f'FY {fiscal_year}')
+    return closing
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 
 
 def fiscal_year_for_date(company, value):

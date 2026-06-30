@@ -7,6 +7,7 @@
 </div>
 <div class="overflow-hidden rounded border bg-white">
     <table class="w-full text-sm">
+<<<<<<< HEAD
         <thead class="bg-slate-100 text-left">
             <tr><th class="p-2">Nama</th><th class="p-2">Jenis</th><th class="p-2">Bank/E-Wallet</th><th class="p-2">Nomor</th><th class="p-2">Pemilik</th><th class="p-2">Akun COA</th><th class="p-2">Status</th></tr>
         </thead>
@@ -25,6 +26,10 @@
                 <tr><td class="p-3 text-slate-600" colspan="7">Belum ada rekening kas/bank.</td></tr>
             {% endfor %}
         </tbody>
+=======
+        <thead class="bg-slate-100 text-left"><tr><th class="p-2">Nama</th><th class="p-2">Akun COA</th><th class="p-2">Status</th></tr></thead>
+        <tbody>{% for account in accounts %}<tr class="border-t"><td class="p-2">{{ account.name }}</td><td class="p-2">{{ account.account.code }} - {{ account.account.name }}</td><td class="p-2">{{ account.is_active|yesno:"Aktif,Nonaktif" }}</td></tr>{% empty %}<tr><td class="p-3 text-slate-600" colspan="3">Belum ada rekening kas/bank.</td></tr>{% endfor %}</tbody>
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     </table>
 </div>
 {% endblock %}

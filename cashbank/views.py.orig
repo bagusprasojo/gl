@@ -69,6 +69,7 @@ def account_create(request):
         form = CashBankAccountForm(company, request.POST)
         if form.is_valid():
             try:
+<<<<<<< HEAD
                 account = create_cashbank_account(
                     company,
                     form.cleaned_data['name'],
@@ -80,6 +81,9 @@ def account_create(request):
                     notes=form.cleaned_data['notes'],
                     user=request.user,
                 )
+=======
+                account = create_cashbank_account(company, form.cleaned_data['name'], form.cleaned_data['account'], user=request.user)
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
                 messages.success(request, f'Rekening {account.name} dibuat.')
                 return redirect('cashbank:account_list')
             except ValidationError as exc:

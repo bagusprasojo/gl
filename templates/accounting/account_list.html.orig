@@ -14,8 +14,12 @@
                     <td class="p-2">{{ account.name }}</td>
                     <td class="p-2">{{ account.get_account_type_display }}</td>
                     <td class="p-2">{{ account.get_normal_balance_display }}</td>
+<<<<<<< HEAD
                     <td class="p-2">{{ account.is_cash_equivalent|yesno:"Ya,Tidak" }}</td>
                     <td class="p-2">{{ account.is_postable|yesno:"Ya,Tidak" }}</td>
+=======
+                    <td class="p-2">{{ account.is_cash_equivalent|yesno:"Ya,Tidak" }}</td>`r`n                    <td class="p-2">{{ account.is_postable|yesno:"Ya,Tidak" }}</td>
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
                 </tr>
             {% endfor %}
         </tbody>

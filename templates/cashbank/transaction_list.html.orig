@@ -4,7 +4,11 @@
 {% block content %}
 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
     <h1 class="text-xl font-semibold">Transaksi Kas/Bank</h1>
+<<<<<<< HEAD
     <div class="flex gap-2 text-sm">
+=======
+    <div class="flex gap-2 text-sm">
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
         <a class="rounded border bg-white px-3 py-2" href="{% url 'cashbank:account_list' %}">Rekening</a>
         <a class="rounded bg-slate-900 px-3 py-2 text-white" href="{% url 'cashbank:incoming_create' %}">Kas Masuk</a>
         <a class="rounded bg-slate-900 px-3 py-2 text-white" href="{% url 'cashbank:outgoing_create' %}">Kas Keluar</a>

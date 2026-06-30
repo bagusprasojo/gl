@@ -33,7 +33,11 @@ def cashbank_account_choices(company):
     return CashBankAccount.objects.filter(company=company, is_active=True).select_related('account').order_by('name')
 
 
+<<<<<<< HEAD
 def counter_account_choices(company):
+=======
+def counter_account_choices(company):
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     return Account.objects.filter(company=company, is_active=True, is_postable=True, is_cash_equivalent=False).order_by('code')
 
 
@@ -53,6 +57,7 @@ def next_transaction_number(company, transaction_type, transaction_date):
 
 
 @transaction.atomic
+<<<<<<< HEAD
 def create_cashbank_account(
     company,
     name,
@@ -75,6 +80,11 @@ def create_cashbank_account(
         account_holder=account_holder,
         notes=notes,
     )
+=======
+def create_cashbank_account(company, name, account, user=None):
+    ensure_module_active(company)
+    cash_account = CashBankAccount(company=company, name=name, account=account)
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     cash_account.full_clean()
     cash_account.save()
     write_audit(company, user, AuditLog.CREATE, cash_account, cash_account.name)
@@ -92,8 +102,13 @@ def _validate_line_specs(company, line_specs):
             raise ValidationError('Line account must belong to the same company.')
         if not account.is_postable:
             raise ValidationError('Line account must be postable.')
+<<<<<<< HEAD
         if account.is_cash_equivalent:
             raise ValidationError('Line account must not be a cash/bank account. Use transfer for cash/bank movements.')
+=======
+        if account.is_cash_equivalent:
+            raise ValidationError('Line account must not be a cash/bank account. Use transfer for cash/bank movements.')
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
         if amount <= 0:
             raise ValidationError('Line amount must be greater than zero.')
         normalized.append({
@@ -296,7 +311,11 @@ def reverse_cashbank_transaction(transaction_obj, user=None, reversal_date=None)
         reversal_date=reversal_date or timezone.localdate(),
         memo=f'Reversal {transaction_obj.number}',
     )
+<<<<<<< HEAD
     transaction_obj.status = CashBankTransaction.REVERSED
+=======
+    transaction_obj.status = CashBankTransaction.REVERSED
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     transaction_obj.save(update_fields=['status', 'updated_at'])
     write_audit(transaction_obj.company, user, AuditLog.REVERSE, transaction_obj, f'{transaction_obj.number} -> {reversal.number}')
     return reversal

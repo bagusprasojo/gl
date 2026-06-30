@@ -11,7 +11,11 @@
                     <td class="p-2">{{ module.key }}</td>
                     <td class="p-2">{{ module.name }}</td>
                     <td class="p-2">{{ module.get_module_type_display }}</td>
+<<<<<<< HEAD
                     <td class="p-2">{{ module.is_active|yesno:"Aktif,Nonaktif" }}</td>
+=======
+                    <td class="p-2">{{ module.is_active|yesno:"Aktif,Nonaktif" }}</td>
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
                     <td class="p-2 text-right">{% if module.module_type == "addon" %}<form method="post" action="{% url 'accounting:module_toggle' module.uuid %}">{% csrf_token %}<button class="text-blue-700">{% if module.is_active %}Nonaktifkan{% else %}Aktifkan{% endif %}</button></form>{% endif %}</td>
                 </tr>
             {% endfor %}

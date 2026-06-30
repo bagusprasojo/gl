@@ -9,6 +9,7 @@ from accounting.models import Account, JournalEntry
 
 
 class CashBankAccount(models.Model):
+<<<<<<< HEAD
     CASH = 'cash'
     BANK = 'bank'
     EWALLET = 'ewallet'
@@ -31,21 +32,36 @@ class CashBankAccount(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+=======
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='cashbank_accounts')
+    name = models.CharField(max_length=160)
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='cashbank_accounts')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['company', 'name'], name='unique_cashbank_account_name_per_company'),
+<<<<<<< HEAD
             models.UniqueConstraint(
                 fields=['company', 'account_number'],
                 condition=~models.Q(account_number=''),
                 name='unique_cashbank_account_number_per_company',
             ),
+=======
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
         ]
         ordering = ['company__name', 'name']
 
     def __str__(self):
+<<<<<<< HEAD
         identifier = self.account_number or self.account.code
         return f'{self.name} ({identifier})'
+=======
+        return f'{self.name} ({self.account.code})'
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 
     def clean(self):
         if self.account_id:

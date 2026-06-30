@@ -67,6 +67,166 @@ class AccountingCoreTests(TestCase):
         self.assertEqual(balance['total_debit'], balance['total_credit'])
         self.assertTrue(balance['is_balanced'])
         self.assertEqual(balance['difference'], 0)
+<<<<<<< HEAD
+=======
+
+    def test_trial_balance_view_uses_as_of_date_and_can_hide_zero_accounts(self):
+        entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Setoran modal',
+            [
+                {'account': self.bank, 'debit': '1000000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '1000000'},
+            ],
+            user=self.user,
+        )
+        post_journal(entry, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.get('/accounting/reports/trial-balance/?as_of_date=2026-06-30&hide_zero=1')
+
+        self.assertContains(response, 'Per 30-06-2026')
+        self.assertContains(response, 'Status: Seimbang')
+        self.assertContains(response, '1.000.000')
+        self.assertContains(response, self.bank.name)
+        self.assertNotContains(response, 'Kas Kecil')
+        self.assertTrue(response.context['hide_zero'])
+
+        pdf_response = client.get('/accounting/reports/trial-balance/?as_of_date=2026-06-30&hide_zero=1&export=pdf')
+
+        self.assertEqual(pdf_response['Content-Type'], 'application/pdf')
+        self.assertTrue(pdf_response.content.startswith(b'%PDF'))
+
+    def test_six_column_trial_balance_shows_opening_movement_and_closing(self):
+        opening_entry = create_draft_journal(
+            self.company,
+            date(2026, 5, 31),
+            'Saldo sebelum periode',
+            [
+                {'account': self.bank, 'debit': '1000000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '1000000'},
+            ],
+            user=self.user,
+        )
+        movement_entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Mutasi periode',
+            [
+                {'account': self.bank, 'debit': '500000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '500000'},
+            ],
+            user=self.user,
+        )
+        post_journal(opening_entry, user=self.user)
+        post_journal(movement_entry, user=self.user)
+
+        data = six_column_trial_balance(self.company, date(2026, 6, 1), date(2026, 6, 30))
+        bank_row = next(row for row in data['rows'] if row['account'] == self.bank)
+        modal_row = next(row for row in data['rows'] if row['account'] == self.modal)
+
+        self.assertEqual(bank_row['opening_debit'], 1000000)
+        self.assertEqual(bank_row['movement_debit'], 500000)
+        self.assertEqual(bank_row['closing_debit'], 1500000)
+        self.assertEqual(modal_row['opening_credit'], 1000000)
+        self.assertEqual(modal_row['movement_credit'], 500000)
+        self.assertEqual(modal_row['closing_credit'], 1500000)
+        self.assertTrue(data['opening_is_balanced'])
+        self.assertTrue(data['movement_is_balanced'])
+        self.assertTrue(data['closing_is_balanced'])
+
+    def test_six_column_trial_balance_view_can_hide_zero_accounts(self):
+        entry = create_draft_journal(
+            self.company,
+            date(2026, 6, 15),
+            'Mutasi periode',
+            [
+                {'account': self.bank, 'debit': '500000', 'credit': '0'},
+                {'account': self.modal, 'debit': '0', 'credit': '500000'},
+            ],
+            user=self.user,
+        )
+        post_journal(entry, user=self.user)
+        client = Client()
+        client.force_login(self.user)
+
+        response = client.get('/accounting/reports/six-column-trial-balance/?start_date=2026-06-01&end_date=2026-06-30&hide_zero=1')
+
+        self.assertContains(response, 'Neraca Saldo 6 Kolom')
+        self.assertContains(response, 'Periode 01-06-2026 s/d 30-06-2026')
+        self.assertContains(response, '500.000')
+        self.assertContains(response, self.bank.name)
+        self.assertNotContains(response, 'Kas Kecil')
+        self.assertTrue(response.context['closing_is_balanced'])
+
+        pdf_response = client.get('/accounting/reports/six-column-trial-balance/?start_date=2026-06-01&end_date=2026-06-30&hide_zero=1&export=pdf')
+
+        self.assertEqual(pdf_response['Content-Type'], 'application/pdf')
+        self.assertTrue(pdf_response.content.startswith(b'%PDF'))
+
+
+    def test_default_header_accounts_are_not_postable(self):
+        header = Account.objects.get(company=self.company, code='1000')
+
+        self.assertFalse(header.is_postable)
+        with self.assertRaisesMessage(ValidationError, 'Account is not postable.'):
+            create_draft_journal(
+                self.company,
+                date(2026, 6, 15),
+                'Header account rejected',
+                [
+                    {'account': header, 'debit': '1000000', 'credit': '0'},
+                    {'account': self.modal, 'debit': '0', 'credit': '1000000'},
+                ],
+                user=self.user,
+            )
+
+    def test_close_fiscal_year_creates_closing_journal_to_retained_earnings(self):
+        revenue = Account.objects.get(company=self.company, code='4100')
+        expense = Account.objects.get(company=self.company, code='6100')
+        retained_earnings = Account.objects.get(company=self.company, code='3300')
+        revenue_entry = create_draft_journal(
+            self.company,
+            date(2026, 12, 15),
+            'Penjualan akhir tahun',
+            [
+                {'account': self.bank, 'debit': '1000000', 'credit': '0'},
+                {'account': revenue, 'debit': '0', 'credit': '1000000'},
+            ],
+            user=self.user,
+        )
+        expense_entry = create_draft_journal(
+            self.company,
+            date(2026, 12, 16),
+            'Beban akhir tahun',
+            [
+                {'account': expense, 'debit': '400000', 'credit': '0'},
+                {'account': self.bank, 'debit': '0', 'credit': '400000'},
+            ],
+            user=self.user,
+        )
+        post_journal(revenue_entry, user=self.user)
+        post_journal(expense_entry, user=self.user)
+        self.close_periods_before(2026, 12)
+        december = AccountingPeriod.objects.get(company=self.company, year=2026, month=12)
+
+        with self.assertRaisesMessage(ValidationError, 'Close fiscal year 2026 first.'):
+            close_period(december, user=self.user)
+
+        closing = close_fiscal_year(self.company, 2026, user=self.user)
+
+        self.assertEqual(closing.closing_entry.status, JournalEntry.POSTED)
+        self.assertEqual(closing.closing_entry.source_type, 'fiscal_year_closing')
+        self.assertTrue(FiscalYearClosing.objects.filter(company=self.company, fiscal_year=2026).exists())
+        balances = {row['account'].code: row for row in account_balances(self.company, date(2026, 1, 1), date(2026, 12, 31))}
+        self.assertEqual(balances['4100']['balance'], 0)
+        self.assertEqual(balances['6100']['balance'], 0)
+        self.assertEqual(balances['3300']['balance'], 600000)
+        close_period(december, user=self.user)
+        self.assertEqual(AccountingPeriod.objects.get(pk=december.pk).status, AccountingPeriod.CLOSED)
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 
     def test_trial_balance_view_uses_as_of_date_and_can_hide_zero_accounts(self):
         entry = create_draft_journal(

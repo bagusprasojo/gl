@@ -6,12 +6,16 @@ from cashbank.models import CashBankAccount, CashBankTransaction
 
 class CashBankAccountForm(forms.Form):
     name = forms.CharField(max_length=160)
+<<<<<<< HEAD
     account_kind = forms.ChoiceField(choices=CashBankAccount.ACCOUNT_KINDS)
     bank_name = forms.CharField(max_length=120, required=False)
     account_number = forms.CharField(max_length=80, required=False)
     account_holder = forms.CharField(max_length=160, required=False)
     account = forms.ModelChoiceField(queryset=Account.objects.none())
     notes = forms.CharField(widget=forms.Textarea(attrs={'rows': 3}), required=False)
+=======
+    account = forms.ModelChoiceField(queryset=Account.objects.none())
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
 
     def __init__(self, company, *args, **kwargs):
         super().__init__(*args, **kwargs)

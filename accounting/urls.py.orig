@@ -15,9 +15,15 @@ urlpatterns = [
     path('journals/<uuid:uuid>/reverse/', views.journal_reverse, name='journal_reverse'),
     path('periods/', views.period_list, name='period_list'),
     path('periods/<uuid:uuid>/close/', views.period_close, name='period_close'),
+<<<<<<< HEAD
     path('periods/<uuid:uuid>/reopen/', views.period_reopen, name='period_reopen'),
     path('fiscal-years/<int:fiscal_year>/close/', views.fiscal_year_close, name='fiscal_year_close'),
     path('modules/', views.module_list, name='module_list'),
+=======
+    path('periods/<uuid:uuid>/reopen/', views.period_reopen, name='period_reopen'),
+    path('fiscal-years/<int:fiscal_year>/close/', views.fiscal_year_close, name='fiscal_year_close'),
+    path('modules/', views.module_list, name='module_list'),
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     path('modules/<uuid:uuid>/toggle/', views.module_toggle, name='module_toggle'),
     path('reports/general-ledger/', views.report_general_ledger, name='report_general_ledger'),
     path('reports/trial-balance/', views.report_trial_balance, name='report_trial_balance'),

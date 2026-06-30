@@ -31,6 +31,7 @@ class CashBankAddonTests(TestCase):
         self.module.is_active = True
         self.module.save(update_fields=['is_active'])
 
+<<<<<<< HEAD
     def test_cashbank_account_stores_bank_metadata(self):
         self.activate_module()
 
@@ -71,6 +72,8 @@ class CashBankAddonTests(TestCase):
                 account_number='1234567890',
                 user=self.user,
             )
+=======
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
     def test_cashbank_service_rejects_when_module_inactive(self):
         with self.assertRaisesMessage(ValidationError, 'Modul Kas/Bank belum aktif.'):
             create_cashbank_account(self.company, 'Bank Operasional', self.bank, user=self.user)
@@ -212,5 +215,10 @@ class CashBankAddonTests(TestCase):
         response = client.get('/cashbank/transactions/incoming/new/')
 
         self.assertContains(response, self.revenue.name)
+<<<<<<< HEAD
         self.assertNotContains(response, '1120 - Bank')
         self.assertNotContains(response, '1110 - Kas Kecil')
+=======
+        self.assertNotContains(response, '1120 - Bank')
+        self.assertNotContains(response, '1110 - Kas Kecil')
+>>>>>>> 930bf092371b6aa159df01e4c28d05574ee009b9
