@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Neraca Saldo 6 Kolom{% endblock %}
+{% block content %}
+<h1 class="mb-4 text-xl font-semibold">Neraca Saldo 6 Kolom</h1>
+<form method="get" class="mb-4 flex flex-wrap items-end gap-3 rounded border bg-white p-3 text-sm">
+    <div>
+        <label class="block">Dari</label>
+        <input class="rounded border px-2 py-1" type="date" name="start_date" value="{{ start_date|date:'Y-m-d' }}">
+    </div>
+    <div>
+        <label class="block">Sampai</label>
+        <input class="rounded border px-2 py-1" type="date" name="end_date" value="{{ end_date|date:'Y-m-d' }}">
+    </div>
+    <label class="flex items-center gap-2 pb-2">
+        <input type="checkbox" name="hide_zero" value="1" {% if hide_zero %}checked{% endif %}>
+        <span>Sembunyikan saldo nol</span>
+    </label>
+    <button class="rounded bg-slate-900 px-3 py-2 text-white">Tampilkan</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="xlsx">Excel</button>
+    <button class="rounded border bg-white px-3 py-2" name="export" value="pdf">PDF</button>
+</form>
+
+<div class="mb-3 rounded border bg-white px-4 py-3 text-sm">
+    <div class="font-semibold">{{ period_label }}</div>
+    <div class="{% if closing_is_balanced %}text-emerald-700{% else %}text-red-700{% endif %}">
+        Status saldo akhir: {% if closing_is_balanced %}Seimbang{% else %}Tidak seimbang{% endif %}
+    </div>
+</div>
+
+<div class="overflow-x-auto rounded border bg-white">
+    <table class="w-full min-w-[980px] text-sm">
+        <thead class="bg-slate-100 text-left">
+            <tr>
+                <th class="p-2" rowspan="2">Kode</th>
+                <th class="p-2" rowspan="2">Akun</th>
+                <th class="border-l p-2 text-center" colspan="2">Saldo Awal</th>
+                <th class="border-l p-2 text-center" colspan="2">Mutasi</th>
+                <th class="border-l p-2 text-center" colspan="2">Saldo Akhir</th>
+            </tr>
+            <tr>
+                <th class="border-l p-2 text-right">Debit</th>
+                <th class="p-2 text-right">Kredit</th>
+                <th class="border-l p-2 text-right">Debit</th>
+                <th class="p-2 text-right">Kredit</th>
+                <th class="border-l p-2 text-right">Debit</th>
+                <th class="p-2 text-right">Kredit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+                <tr class="border-t">
+                    <td class="p-2">{{ row.account.code }}</td>
+                    <td class="p-2">{{ row.account.name }}</td>
+                    <td class="border-l p-2 text-right">{{ row.opening_debit|thousand_id }}</td>
+                    <td class="p-2 text-right">{{ row.opening_credit|thousand_id }}</td>
+                    <td class="border-l p-2 text-right">{{ row.movement_debit|thousand_id }}</td>
+                    <td class="p-2 text-right">{{ row.movement_credit|thousand_id }}</td>
+                    <td class="border-l p-2 text-right">{{ row.closing_debit|thousand_id }}</td>
+                    <td class="p-2 text-right">{{ row.closing_credit|thousand_id }}</td>
+                </tr>
+            {% empty %}
+                <tr class="border-t"><td class="p-3 text-slate-600" colspan="8">Tidak ada akun yang ditampilkan.</td></tr>
+            {% endfor %}
+        </tbody>
+        <tfoot class="border-t bg-slate-50 font-semibold">
+            <tr>
+                <td class="p-2" colspan="2">Total</td>
+                <td class="border-l p-2 text-right">{{ totals.opening_debit|thousand_id }}</td>
+                <td class="p-2 text-right">{{ totals.opening_credit|thousand_id }}</td>
+                <td class="border-l p-2 text-right">{{ totals.movement_debit|thousand_id }}</td>
+                <td class="p-2 text-right">{{ totals.movement_credit|thousand_id }}</td>
+                <td class="border-l p-2 text-right">{{ totals.closing_debit|thousand_id }}</td>
+                <td class="p-2 text-right">{{ totals.closing_credit|thousand_id }}</td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+{% endblock %}

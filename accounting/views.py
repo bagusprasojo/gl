@@ -7,18 +7,27 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 
-from accounting.exports import export_financial_statement, export_rows_pdf, export_rows_xlsx
+from accounting.exports import (
+    export_financial_statement,
+    export_rows_pdf,
+    export_rows_xlsx,
+    export_six_column_trial_balance,
+    export_trial_balance,
+)
 from accounting.forms import JournalEntryForm, account_choices, parse_journal_lines
-from accounting.models import Account, AccountingPeriod, JournalEntry
+from accounting.models import Account, AccountingPeriod, FiscalYearClosing, JournalEntry
 from accounting.services import (
     balance_sheet,
     cash_flow,
     close_period,
+    close_fiscal_year,
+    fiscal_year_bounds,
     general_ledger,
     income_statement,
     post_journal,
     reverse_journal,
     create_draft_journal,
+    six_column_trial_balance,
     trial_balance,
     update_draft_journal,
     delete_draft_journal,
@@ -26,10 +35,12 @@ from accounting.services import (
     render_cash_flow_statement,
     get_latest_closed_period,
     get_next_closeable_period,
+    get_next_closeable_fiscal_year,
     reopen_period,
 )
 from accounting.models import FinancialReportTemplate
 from modules.models import ModuleRegistry
+from modules.services import set_module_status
 
 
 def _company(request):
@@ -308,7 +319,20 @@ def period_list(request):
     for period in periods:
         period.can_close = bool(next_closeable_period and period.pk == next_closeable_period.pk)
         period.can_reopen = bool(latest_closed_period and period.pk == latest_closed_period.pk)
-    return render(request, 'accounting/period_list.html', {'periods': periods})
+    next_fiscal_year = get_next_closeable_fiscal_year(company)
+    fiscal_start, fiscal_end = fiscal_year_bounds(company, next_fiscal_year)
+    fiscal_year_closings = FiscalYearClosing.objects.filter(company=company).select_related('closing_entry')[:5]
+    return render(
+        request,
+        'accounting/period_list.html',
+        {
+            'periods': periods,
+            'next_fiscal_year': next_fiscal_year,
+            'fiscal_start': fiscal_start,
+            'fiscal_end': fiscal_end,
+            'fiscal_year_closings': fiscal_year_closings,
+        },
+    )
 
 
 @login_required
@@ -334,12 +358,31 @@ def period_reopen(request, uuid):
             messages.error(request, exc.messages[0])
     return redirect('accounting:period_list')
 
+@login_required
+def fiscal_year_close(request, fiscal_year):
+    if request.method == 'POST':
+        try:
+            closing = close_fiscal_year(_company(request), fiscal_year, user=request.user)
+            messages.success(request, f'Tahun buku {fiscal_year} ditutup dengan jurnal {closing.closing_entry.number}.')
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0])
+    return redirect('accounting:period_list')
 
 @login_required
 def module_list(request):
     modules = ModuleRegistry.objects.filter(company=_company(request))
     return render(request, 'accounting/module_list.html', {'modules': modules})
 
+
+
+@login_required
+def module_toggle(request, uuid):
+    module = get_object_or_404(ModuleRegistry, uuid=uuid, company=_company(request))
+    if request.method == 'POST':
+        set_module_status(module, not module.is_active, user=request.user)
+        status = 'diaktifkan' if module.is_active else 'dinonaktifkan'
+        messages.success(request, f'Modul {module.name} {status}.')
+    return redirect('accounting:module_list')
 
 def _export(request, filename, title, headers, rows):
     fmt = request.GET.get('export')
@@ -405,13 +448,77 @@ def report_general_ledger(request):
 
 @login_required
 def report_trial_balance(request):
-    start, end = _date_filters(request)
-    data = trial_balance(_company(request), start, end)
-    rows = [[row['account'].code, row['account'].name, row['debit'], row['credit']] for row in data['rows']]
-    exported = _export(request, 'neraca-percobaan', 'Neraca Percobaan', ['Kode', 'Akun', 'Debit', 'Kredit'], rows)
+    company = _company(request)
+    as_of_date = _as_of_date_filter(request) or date.today()
+    hide_zero = request.GET.get('hide_zero') == '1'
+    data = trial_balance(company, end_date=as_of_date)
+    rows = data['rows']
+    if hide_zero:
+        rows = [row for row in rows if row['debit'] or row['credit']]
+    data = {**data, 'rows': rows}
+    period_label = _period_label(end_date=as_of_date, as_of=True)
+    exported = export_trial_balance(
+        request,
+        'neraca-percobaan',
+        company,
+        'Neraca Percobaan',
+        period_label,
+        data,
+    )
     if exported:
         return exported
-    return render(request, 'accounting/report_trial_balance.html', data)
+    return render(
+        request,
+        'accounting/report_trial_balance.html',
+        {**data, 'as_of_date': as_of_date, 'hide_zero': hide_zero, 'period_label': period_label},
+    )
+
+
+@login_required
+def report_six_column_trial_balance(request):
+    company = _company(request)
+    start, end = _date_filters(request)
+    today = date.today()
+    start = start or today.replace(day=1)
+    end = end or today
+    hide_zero = request.GET.get('hide_zero') == '1'
+    data = six_column_trial_balance(company, start, end)
+    rows = data['rows']
+    if hide_zero:
+        rows = [
+            row for row in rows
+            if any(row[key] for key in [
+                'opening_debit',
+                'opening_credit',
+                'movement_debit',
+                'movement_credit',
+                'closing_debit',
+                'closing_credit',
+            ])
+        ]
+    data = {**data, 'rows': rows}
+    period_label = _period_label(start, end)
+    exported = export_six_column_trial_balance(
+        request,
+        'neraca-saldo-6-kolom',
+        company,
+        'Neraca Saldo 6 Kolom',
+        period_label,
+        data,
+    )
+    if exported:
+        return exported
+    return render(
+        request,
+        'accounting/report_six_column_trial_balance.html',
+        {
+            **data,
+            'start_date': start,
+            'end_date': end,
+            'hide_zero': hide_zero,
+            'period_label': period_label,
+        },
+    )
 
 
 @login_required

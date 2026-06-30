@@ -11,6 +11,7 @@ class AuditLog(models.Model):
     POST = 'post'
     REVERSE = 'reverse'
     CLOSE_PERIOD = 'close_period'
+    CLOSE_FISCAL_YEAR = 'close_fiscal_year'
     ACTIVATE_MODULE = 'activate_module'
     DEACTIVATE_MODULE = 'deactivate_module'
 
@@ -21,6 +22,7 @@ class AuditLog(models.Model):
         (POST, 'Post'),
         (REVERSE, 'Reverse'),
         (CLOSE_PERIOD, 'Close period'),
+        (CLOSE_FISCAL_YEAR, 'Close fiscal year'),
         (ACTIVATE_MODULE, 'Activate module'),
         (DEACTIVATE_MODULE, 'Deactivate module'),
     ]

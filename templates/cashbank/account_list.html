@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Rekening Kas/Bank{% endblock %}
+{% block content %}
+<div class="mb-4 flex items-center justify-between">
+    <h1 class="text-xl font-semibold">Rekening Kas/Bank</h1>
+    <div class="flex gap-2 text-sm"><a class="rounded border bg-white px-4 py-2" href="{% url 'cashbank:transaction_list' %}">Transaksi</a><a class="rounded bg-slate-900 px-4 py-2 text-white" href="{% url 'cashbank:account_create' %}">Rekening Baru</a></div>
+</div>
+<div class="overflow-hidden rounded border bg-white">
+    <table class="w-full text-sm">
+        <thead class="bg-slate-100 text-left">
+            <tr><th class="p-2">Nama</th><th class="p-2">Jenis</th><th class="p-2">Bank/E-Wallet</th><th class="p-2">Nomor</th><th class="p-2">Pemilik</th><th class="p-2">Akun COA</th><th class="p-2">Status</th></tr>
+        </thead>
+        <tbody>
+            {% for account in accounts %}
+                <tr class="border-t">
+                    <td class="p-2">{{ account.name }}</td>
+                    <td class="p-2">{{ account.get_account_kind_display }}</td>
+                    <td class="p-2">{{ account.bank_name|default:"-" }}</td>
+                    <td class="p-2">{{ account.account_number|default:"-" }}</td>
+                    <td class="p-2">{{ account.account_holder|default:"-" }}</td>
+                    <td class="p-2">{{ account.account.code }} - {{ account.account.name }}</td>
+                    <td class="p-2">{{ account.is_active|yesno:"Aktif,Nonaktif" }}</td>
+                </tr>
+            {% empty %}
+                <tr><td class="p-3 text-slate-600" colspan="7">Belum ada rekening kas/bank.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -12,7 +12,7 @@ class JournalEntryForm(forms.Form):
 
 
 def account_choices(company):
-    return Account.objects.filter(company=company, is_active=True).order_by('code')
+    return Account.objects.filter(company=company, is_active=True, is_postable=True).order_by('code')
 
 
 def parse_journal_lines(company, post_data):
@@ -26,7 +26,7 @@ def parse_journal_lines(company, post_data):
             continue
         lines.append(
             {
-                'account': Account.objects.get(company=company, pk=account_id),
+                'account': Account.objects.get(company=company, pk=account_id, is_postable=True),
                 'description': descriptions[index] if index < len(descriptions) else '',
                 'debit': debits[index] if index < len(debits) and debits[index] else '0',
                 'credit': credits[index] if index < len(credits) and credits[index] else '0',

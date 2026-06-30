@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}{{ transaction.number }}{% endblock %}
+{% block content %}
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div><h1 class="text-xl font-semibold">{{ transaction.number }}</h1><p class="text-sm text-slate-600">{{ transaction.get_transaction_type_display }} - {{ transaction.get_status_display }}</p></div>
+    <div class="flex gap-2 text-sm">
+        {% if transaction.status == 'draft' %}
+            <a class="rounded border bg-white px-4 py-2" href="{% url 'cashbank:transaction_edit' transaction.uuid %}">Edit</a>
+            <form method="post" action="{% url 'cashbank:transaction_post' transaction.uuid %}">{% csrf_token %}<button class="rounded bg-slate-900 px-4 py-2 text-white">Posting</button></form>
+            <form method="post" action="{% url 'cashbank:transaction_delete' transaction.uuid %}" onsubmit="return confirm('Hapus transaksi {{ transaction.number }}?')">{% csrf_token %}<button class="rounded border border-red-200 bg-white px-4 py-2 text-red-700">Hapus</button></form>
+        {% endif %}
+        {% if transaction.status == 'posted' %}
+            <form method="post" action="{% url 'cashbank:transaction_reverse' transaction.uuid %}">{% csrf_token %}<button class="rounded border bg-white px-4 py-2">Reversal</button></form>
+        {% endif %}
+    </div>
+</div>
+<div class="mb-4 grid gap-3 rounded border bg-white p-4 text-sm md:grid-cols-2">
+    <div><span class="text-slate-500">Tanggal:</span> {{ transaction.date }}</div>
+    <div><span class="text-slate-500">Nilai:</span> {{ transaction.amount|thousand_id }}</div>
+    <div><span class="text-slate-500">Rekening:</span> {% if transaction.transaction_type == 'transfer' %}{{ transaction.from_account.name }} -> {{ transaction.to_account.name }}{% else %}{{ transaction.cash_account.name }}{% endif %}</div>
+    <div><span class="text-slate-500">Jurnal:</span> {% if transaction.journal_entry %}<a class="text-blue-700" href="{% url 'accounting:journal_detail' transaction.journal_entry.uuid %}">{{ transaction.journal_entry.number }}</a>{% else %}-{% endif %}</div>
+    {% if transaction.counterparty %}<div><span class="text-slate-500">Pihak Terkait:</span> {{ transaction.counterparty }}</div>{% endif %}
+    {% if transaction.admin_fee %}<div><span class="text-slate-500">Biaya Admin:</span> {{ transaction.admin_fee|thousand_id }}{% if transaction.admin_fee_account %} - {{ transaction.admin_fee_account }}{% endif %}</div>{% endif %}
+    <div class="md:col-span-2"><span class="text-slate-500">Memo:</span> {{ transaction.memo|default:'-' }}</div>
+</div>
+{% if transaction.transaction_type != 'transfer' %}
+<div class="overflow-hidden rounded border bg-white"><table class="w-full text-sm"><thead class="bg-slate-100 text-left"><tr><th class="p-2">Akun Lawan</th><th class="p-2">Keterangan</th><th class="p-2 text-right">Nilai</th></tr></thead><tbody>{% for line in transaction.lines.all %}<tr class="border-t"><td class="p-2">{{ line.account.code }} - {{ line.account.name }}</td><td class="p-2">{{ line.description }}</td><td class="p-2 text-right">{{ line.amount|thousand_id }}</td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+{% endblock %}
